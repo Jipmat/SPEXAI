@@ -12,7 +12,7 @@ matplotlib.rc('font', **font)
 # from multiprocessing import Pool
 from IPython.display import display, Math
 
-import model
+import spexai.model as model
 
 
 
