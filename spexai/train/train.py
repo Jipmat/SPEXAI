@@ -12,20 +12,65 @@ class NeuralNetworkTrainer(object):
     def __init__(self, X, y, X_test, y_test, model, loss_fn=torch.nn.MSELoss(),
                  optimizer='adam', l_rate=1e-2, lr_factor=0.33, lr_patience=250,
                  lr_threshold=2e-2, lr_mode='rel', lr_cooldown=100, 
-                 scaler_flux=None, scaler_pca=None, mask=None, mask_test=None, f_dir='log/', save_model=False, name=None,  element=00):
+                 scaler_flux=None, mask=None, mask_test=None, f_dir='log/', 
+                 save_model=False, name=None,  element=00):
         '''
-        Trainer class to train a given model on the test data
-        X: tensor
-            labels trainingdata
-        y: tensor
-            trainingdata
-        X_test: tensor
+        Trainer class to train a given model on the training data. This class sets up 
+        the training process for the neural network.
+
+        Parameters
+        ---------
+        X: pytorch.Tensor
+            training data (temperatures)
+
+        y: pytorch.Tensor
+            training data labels (spectra)
+
+        X_test: pytorch.Tensor
+            validation data (temperatures)
+
+        y_test : pytorch.Tensor
+            validation data (spectra)
+
         model: torch.Module
-            Neural Network model
+            the neural network model
+
         mask, mask_test: tensor
-            this tensor equals one on position where there data used for training
-            and 0 for datapositions that are excluded for data.
-        
+            this tensor equals one on position where the data is used for training
+            (i.e. where the flux in the spectrum is > `min_flux`)
+            and 0 for data positions that are excluded in the loss function
+
+        scaler_flux : sklearn.StandardScaler object
+            A standard scaler for per-feature scaling of the spectra
+
+        save_model : bool, default False
+            If True, save the trained model to disk
+
+        f_dir : str
+            The directory where to store the saved model (if `save_model = True`)      
+
+        name : str
+            An identifier for a model to be stored
+
+        element : int
+            A numerical identifier for the element being trained, used in constructing
+            an informative name for the model if saved to disk
+
+        Other Parameters
+        ----------------
+        loss_fn : torch.nn loss function
+            The loss function used for training the neural network
+
+        optimizer : str
+            The optimizer to use for training the neural network
+            Possible values can be `adam`, `nadam`, `adadelta` or `adagrad`
+
+        l_rate : float
+            Learning rate
+
+        lr_factor, lr_patience, lr_treshold, lr_mode, lr_cooldown: 
+            Parameters for setting and adjusting the learning rate
+ 
         '''
         
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -49,7 +94,7 @@ class NeuralNetworkTrainer(object):
         self.name = name
 
         self.model = model.to(self.device)
-        self.optimizer = self.build_optimizer(optimizer, l_rate)
+        self.optimizer = self._build_optimizer(optimizer, l_rate)
         self.schedular = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min',
                                                                 factor=lr_factor, 
                                                                 patience=lr_patience,
@@ -65,13 +110,15 @@ class NeuralNetworkTrainer(object):
 
     def train(self, nepochs, nbatch):
         '''
-        Traines model over nepochs with a batch size of nbatch
-
-        need to implement pca in loss
+        Trains model over `nepochs`  with a batch size of `nbatch`
 
         Parameters
         ----------
+        nepochs : int
+            The number of epochs for which to train
 
+        nbatch : int
+            The number of training examples in each minibatch
         '''
         time_run = time.time()
         for epoch in range(nepochs):
@@ -145,13 +192,19 @@ class NeuralNetworkTrainer(object):
 
     def test(self, nbatch):
         '''
-        Caluclates the avg loss over a epoch on the test data
+        Calculates the average loss given a current model on a validation 
+        or test data set
+
         Parameters
         -----
         nbatch: int
-        
+            the size of the minibatch over which to compute the loss function        
+
+        Returns
+        -------
         loss_test: float
-            Average test loss
+            Average validation/test loss
+
         '''
         #intit
         self.model.eval()
@@ -188,11 +241,20 @@ class NeuralNetworkTrainer(object):
     
     def predict(self, X):
         '''
-        Model prediction for a given label
+        Model prediction for a given temperature or array of 
+        temperatures. 
+
         Paramters
         ---------
         X: Tensor
-            Label
+            Set of temperatures for which to predict
+            the spectrum
+
+        Returns
+        -------
+        ypred : pytorch.Tensor
+             The predicted spectra for the temperatures stored 
+             in `X`
         '''
         self.model.eval()
         X = X.to(self.device)
@@ -200,7 +262,7 @@ class NeuralNetworkTrainer(object):
     
     def save(self):
         '''
-        saves the trained model to log file with the name and data of the model
+        Save the trained model to a pickle file with the name and date of the model
         '''
         #give_data
         
@@ -222,16 +284,21 @@ class NeuralNetworkTrainer(object):
     
     def load(self, model_dir):
         '''
-        modeldir: str
-            Path to save statedict of model
+        Load a trained model from file.
+
+        Parameters
+        ----------
+        model_file : str
+            Path to saved `state_dict` of model
+
         '''
         self.model = torch.load(model_dir).to(self.device)
         self.loss_test = np.loadtxt(model_dir+'_Loss_test')
         self.loss_train = np.loadtxt(model_dir+'_Loss_train')
 
-    def build_optimizer(self, optimizer, learning_rate):
+    def _build_optimizer(self, optimizer, learning_rate):
         '''
-        Initializes optimzer
+        Initializes the optimzer
         Parameters
         ----------
         optimizer: str
@@ -254,8 +321,27 @@ class NeuralNetworkTrainer(object):
     
     def original_loss(self,  pred,  original, mask=None):
         '''
-        Calculates to loss whilest taking into account the criteria (mask)
-        and making sure the output is equeal to the original spectra.
+        This defines the custom loss function we use in training the emulator. 
+        It calculates the loss function defined in the `loss_fn` attribute, but if 
+        a `mask` is set, regions where the value of `mask` = 0 will only contribute 
+        to the loss function if the emulated value is above the critical value, and 
+        ignored otherwise (with the assumption that it will be small enough not to  
+        contribute to the flux in a meaningful way. This helps the network focus on 
+        training in those areas where the flux most contributes to the observed spectrum
+
+        Parameters
+        ----------
+        pred : torch.Tensor
+            the spectrum fluxes predicted by the neural network
+
+        original : torch.Tensor
+            the training data for the same temperature as the predicted spectrum
+
+        mask : torch.Tensor
+            a boolean mask to apply to the spectra, where the loss function will 
+            only be calculated for energy bins where mask == 1 or where the predicted 
+            flux exceeds the threshold. 
+
         '''
         #calculate loss for original spectra
         if mask is None:
