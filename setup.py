@@ -11,10 +11,10 @@ setup(
     packages=['spexai'],
     install_requires=['numpy',
                       'pandas',
-                      'pytorch',
+#                      'pytorch',
                       'scikit-learn',
                       'matplotlib',
-                      'emcee',
+#                      'emcee',
                       'scipy',
                       'seaborn',
                       'astropy'                     
