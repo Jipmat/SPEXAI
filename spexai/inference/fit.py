@@ -9,12 +9,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 font = {'size'   : 16}
 matplotlib.rc('font', **font)
-# from multiprocessing import Pool
-from IPython.display import display, Math
+#from IPython.display import display, Math
 
-import model
-
-
+import spexai.inference.model as model
 
 class FitTempDist(object):
     def __init__(self, spectra, energy_data, dx, exp_time,  nwalkers, nsteps, Luminosity_Distance = None,
@@ -209,9 +206,11 @@ class FitTempDist(object):
         for i in range(len(self.param_names)):
             mcmc = np.percentile(self.fit_distribution[:, i], [16, 50, 84])
             q = np.diff(mcmc)
-            txt = "\mathrm{{{3}}} = {0:.5f}_{{-{1:.5f}}}^{{{2:.5f}}}"
-            txt = txt.format(mcmc[1], q[0], q[1], self.param_names[i])
-            display(Math(txt))
+            txt = f"{self.param_names[i]} = {mcmc[1]}_(-{q[0]})^({+{q[1]}})"
+            # The below only works in Visual Studio Code
+            #txt = "\mathrm{{{3}}} = {0:.5f}_{{-{1:.5f}}}^{{{2:.5f}}}"
+            #txt = txt.format(mcmc[1], q[0], q[1], self.param_names[i])
+            #display(Math(txt))
         
     
     def log_prior(self, params):

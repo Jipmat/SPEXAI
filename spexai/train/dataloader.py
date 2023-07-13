@@ -5,7 +5,6 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA, NMF, KernelPCA, TruncatedSVD, FactorAnalysis, SparsePCA
 
 
 torch.set_default_dtype(torch.float32)
@@ -159,13 +158,7 @@ class SpexAIMemoryDataset(Dataset):
         flux = self.flux[idx,:]
         return label, flux
     
-    def PCA_func(self, n_components):
-        self.pca = PCA(n_components=n_components)
-        if self.flux_scaled is not None:
-            self.flux_scaled_pca = torch.from_numpy(self.pca.fit_transform(self.flux_scaled))
-        self.flux_pca = torch.from_numpy(self.pca.fit_transform(self.flux))
-        
-    
+   
     def scale_data(self):
         '''
         Scales the temperature and the flux to a mean=0 and stdev=1.
