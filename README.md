@@ -46,8 +46,23 @@ For the inference submodule, additional requirements are:
 * astropy
 * torchinterp1d: https://github.com/aliutkus/torchinterp1d
 
-All dependencies except the `torchinterp1d` package should be installable via pip or 
+Most dependencies should be installable via pip or 
 conda. We suggest working in a clean virtual environment. 
+
+To start a conda environment with the necessary dependencies, start e.g. with
+
+     conda create --name spexai python=3.10 numpy scipy matplotlib pandas astropy scikit-learn seaborn
+
+To install PyTorch, see instructions at `https://pytorch.org/get-started/locally/`, e.g.
+
+     conda install pytorch::pytorch torchvision torchaudio -c pytorch
+
+**Note**: Both commands above are unlikely to stay up-to-date in this documentation, as Python 
+versions and pytorch versions change! Make sure to adapt the commands to your current circumstances.
+
+To install `emcee`, you can do:
+
+     conda install -c conda-forge emcee
 
 To install `torchinterp1d`, please clone or download the repository, then install it with
 `pip install -e` in the root folder of that directory in the same environment as the 
