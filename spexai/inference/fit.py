@@ -11,7 +11,7 @@ font = {'size'   : 16}
 matplotlib.rc('font', **font)
 #from IPython.display import display, Math
 
-import spexai.model as model
+import spexai.inference.model as model
 
 class FitTempDist(object):
     def __init__(self, spectra, energy_data, dx, exp_time,  nwalkers, nsteps, Luminosity_Distance = None,
