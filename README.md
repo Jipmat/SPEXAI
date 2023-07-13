@@ -70,6 +70,13 @@ packages above.
 
 ### Installing SpexAI
 
+To install SpexAI, download or clone the GitHub repo, then in the top-level SpexAI
+directory, type
+
+    pip install -e .
+
+This should install `spexai`.
+
 ## Authors
 * Jip Matthijsse
 * Daniela Huppenkothen
