@@ -5,7 +5,6 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA, NMF, KernelPCA, TruncatedSVD, FactorAnalysis, SparsePCA
 
 
 torch.set_default_dtype(torch.float32)
