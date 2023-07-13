@@ -9,15 +9,16 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 font = {'size'   : 16}
 matplotlib.rc('font', **font)
-#from IPython.display import display, Math
+
+import write_tensors
 
 import spexai.inference.model as model
 
 class FitTempDist(object):
-    def __init__(self, spectra, energy_data, dx, exp_time,  nwalkers, nsteps, Luminosity_Distance = None,
+    def __init__(self, nwalkers, nsteps, Luminosity_Distance = None,
                  prior= {'temp': {'mu': 5, 'sigma': 2}, 'stdevtemp': {'mu': -5, 'sigma': 2}, 'met':  {'mu': 1, 'sigma': .3}, 'Z_':{'mu': 1, 'sigma': .3},
                  'vel':  {'mu': 100, 'sigma': 50},  'norm': {'mu': 1e10, 'sigma': 1e10}, 'logz': {'mu': -5,  'sigma': 2}},
-                 fdir='restructure_spectra', e_min=None, e_max=None):
+                 e_min=None, e_max=None):
         '''
         Class to be able fit a spectrum with a temperature distribution in the form of a gaussion
         Parameters
@@ -45,21 +46,8 @@ class FitTempDist(object):
 
         '''
 
-        if e_min is None:
-            e_min= min(energy_data)
-        if e_max is None:
-            e_max = max(energy_data)
-
-        self.fdir = fdir
-        energy = torch.load(self.fdir+'/new_spec_e_cent_torch')
-
-        #cut off spectra outside of e_min and e_max
-        interval = np.where(energy < e_min, False, True)
-        self.interval = np.where(energy > e_max, False, interval)
-        interval_data = np.where(energy_data < e_min, False, True)
-        interval_data = np.where(energy_data > e_max, False, interval_data)
-        self.spectra = (spectra[interval_data]*dx[interval_data]*exp_time).astype(int)
-        self.flux =spectra[interval_data]
+        self.e_min = e_min
+        self.e_max = e_max
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -78,13 +66,33 @@ class FitTempDist(object):
         #fit parameters
         self.nwalkers = nwalkers
         self.nsteps = nsteps
-        self.stdev_walkers = .5
 
         self.param_names = ['Temperature [KeV]', 'Temp Stdev log[KeV]','Redshift [log(z)]', 'Velocity [km/sec]', 'Metalicity [Fe/H]', 'Normalisation']
-        self.energy = energy[self.interval]
-        self.dx = dx[interval_data]
+
+
+    def load_data(self, filepath):
+        '''reads in the fits file of the data'''
+        counts, channels, exp_time  = write_tensors.read_data(filepath)
+        dx = self.combined_model.new_dx
+        chan_ecent = self.combined_model.x
+        
         self.exp_time = exp_time
 
+        #cut off spectra outside of e_min and e_max
+        if self.e_min is None:
+            self.e_min= min(channels)
+        if self.e_max is None:
+            self.e_max = max(channels)
+
+        interval = np.where(chan_ecent < self.e_min, False, True)
+        self.interval = np.where(chan_ecent > self.e_max, False, interval)
+        interval_data = np.where(channels < self.e_min, False, True)
+        interval_data = np.where(channels > self.e_max, False, interval_data)
+
+        self.counts = (counts[interval_data]).astype(int)
+        self.intensity = counts[interval_data]/dx[interval_data]/exp_time
+        self.energy = chan_ecent[self.interval]
+        self.dx = dx[interval_data]
 
     def fit_spectra(self, add_params=None, add_position=None):
         ''' 
@@ -92,7 +100,7 @@ class FitTempDist(object):
         Paramaters
         ----------
         add_params: list of str
-            list of element names to fit to the ratio of iron in the form 'Z. [Z_/Fe]' with '.' the atom number.
+            list of element names to fit to the ratio of iron in the form 'Z. [Z./Fe]' with '.' the atom number.
         add_position: array
             array of initial position with lenght of nwalkers
         '''
@@ -106,7 +114,7 @@ class FitTempDist(object):
             log_prob_fn = self.log_prob,
             kwargs = {
                 'param_names': self.param_names,
-                'data': self.spectra,
+                'data': self.counts,
                 'model': self.combined_model
                 }
             )
@@ -171,7 +179,7 @@ class FitTempDist(object):
         plots the spectra data against the distribution of best fits
         '''
         fig = plt.figure(figsize=(20,10))
-        plt.plot(self.energy.detach().numpy(), self.flux
+        plt.plot(self.energy.detach().numpy(), self.intensity
                  , alpha=0.5, label='Simulated Data')
 
         for i in range(100):
@@ -180,8 +188,8 @@ class FitTempDist(object):
             for i in torch.arange(6,31):
                 dict_abund[f'Z{i}'] = sample['Metalicity [Fe/H]']
                 for key in sample.keys():
-                    if key == f'Z{i} [Z_/Fe]':
-                        dict_abund[f'Z{i}'] = sample['Metalicity [Fe/H]']*sample[f'Z{i} [Z_/Fe]']
+                    if key == f'Z{i} [Z{i}/Fe]':
+                        dict_abund[f'Z{i}'] = sample['Metalicity [Fe/H]']*sample[f'Z{i} [Z{i}/Fe]']
 
             low = max(sample['Temperature [KeV]']-4*10**sample['Temp Stdev log[KeV]'], 0.1)
             high = min(sample['Temperature [KeV]']+4*10**sample['Temp Stdev log[KeV]'],10)
@@ -198,7 +206,7 @@ class FitTempDist(object):
         plt.legend()
         plt.xlabel('Energy [KeV]')
         plt.ylabel('Counts/KeV/s')
-        plt.ylim(1e-2, max(self.flux)*2)
+        plt.ylim(1e-2, max(self.intensity)*2)
         plt.xlim(0.1, 15)
         plt.show()
 
@@ -234,7 +242,7 @@ class FitTempDist(object):
         prior_Z = 0
         for key in params.keys():
             if key.startswith('Z'):
-                prior_Z += np.log(1.0/(np.sqrt(2*np.pi)*self.prior['vel']['sigma']))-0.5*(params[key]-self.prior['vel']['mu'])**2/self.prior['vel']['sigma']**2
+                prior_Z += np.log(1.0/(np.sqrt(2*np.pi)*self.prior['Z_']['sigma']))-0.5*(params[key]-self.prior['Z_']['mu'])**2/self.prior['Z_']['sigma']**2
                 if params[key] < 0:
                     return -np.inf
         return prior_met + prior_Z + prior_temp + prior_vel + prior_stdevtemp
@@ -259,8 +267,8 @@ class FitTempDist(object):
         for i in torch.arange(6,31):
             dict_abund[f'Z{i}'] = params['Metalicity [Fe/H]']
             for key in params.keys():
-                if key == f'Z{i} [Z_/Fe]':
-                    dict_abund[f'Z{i}'] = params['Metalicity [Fe/H]']*params[f'Z{i} [Z_/Fe]']
+                if key == f'Z{i} [Z{i}/Fe]':
+                    dict_abund[f'Z{i}'] = params['Metalicity [Fe/H]']*params[f'Z{i} [Z{i}/Fe]']
         
         #intialize temperature grid
         low = max(params['Temperature [KeV]']-4*10**params['Temp Stdev log[KeV]'], 0.1)

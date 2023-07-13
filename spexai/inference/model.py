@@ -4,6 +4,8 @@ import torch.nn as nn
 from torchinterp1d import interp1d as interp1d_torch
 import scipy.constants as constants
 
+import write_tensors
+
 torch.set_default_dtype(torch.float32)
 
 
@@ -144,19 +146,36 @@ class CombinedModel(nn.Module):
         return torch.nn.ModuleDict(dic)
     
 
-    def load_data(self):
+    def load_rm(self, filepath):
         '''
-        load all the tensor objects for the combined model
+        load the response matrix and energy bins/channels from the  RMF FITS file
         '''
-        self.spec_resp = nn.Parameter(torch.load(self.fdir+'/arf_torch'))
-        self.rm = nn.Parameter(torch.load(self.fdir+'/rmf_torch'))
-        self.x = torch.load(self.fdir+'/spec_e_cent_torch')
-        spec_e_lo = torch.load(self.fdir+'/spec_e_lo_torch')
-        spec_e_hi = torch.load(self.fdir+'/spec_e_hi_torch')
-        self.new_x = torch.load( self.fdir+'/new_spec_e_cent_torch')
-        self.sm_x = torch.load(self.fdir+'/broadening_sparse_x')
-        self.dx = (spec_e_hi-spec_e_lo).type(torch.float32)
-    
+        rm, spec_e, chan_e =  write_tensors.rmf_to_torchmatrix(filepath)
+        self.rm = nn.Parameter(rm)
+        #energy bins
+        self.x = spec_e[0]
+        self.dx = (spec_e[2]-spec_e[1]).type(torch.float32)
+        #energy channels
+        self.new_x = chan_e[0]
+        self.new_dx = (chan_e[2]-chan_e[1]).type(torch.float32)
+
+
+    def load_arf(self, filepath):
+           '''
+           load in the effective area response from the FITS file
+           '''
+
+           arf = write_tensors.arf_to_tensor(filepath)
+           self.spec_resp = nn.Parameter(arf)
+
+
+    def load_sparsematrix_x(self, n=300):
+        '''
+        load in the sparse matrix used for the convolution that implements line broadening
+        '''
+        sm_x = write_tensors.make_sparsex(self.x, n=n)
+        self.sm_x = torch.load(sm_x)
+
 
     
 class TempDist(CombinedModel):

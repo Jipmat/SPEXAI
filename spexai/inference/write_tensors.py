@@ -5,7 +5,6 @@ import torch
 torch.set_default_dtype(torch.float32)
 
 
-
 def rmf_to_torchmatrix(filepath):
     """
     Read in an OGIP-compliant response matrix using astropy,
@@ -164,14 +163,13 @@ def load_models(elements, file_dir, model_names):
     return torch.nn.ModuleDict(dic)
 
 
-def make_sparsex(n=400, fdir='restructure_spectra'):
+def make_sparsex(x, n=300):
     ''' '
     will fill a sparse matrix with energies around a central energy and will transform the energies with a factor of itself
     '''
     #how to fill a sparse matrix
     #torch tensor([row_index, column_index])
 
-    x = torch.load(fdir+'/spec_e_cent_torch')
 
     collumn_index = torch.tensor([])
     row_index = torch.tensor([])
@@ -191,3 +189,15 @@ def make_sparsex(n=400, fdir='restructure_spectra'):
     index = torch.cat((row_index.view(1,-1), collumn_index.view(1,-1)))
     sparse_x = torch.sparse_coo_tensor(index, x_values, (len(x), len(x)))
     return sparse_x
+
+def read_data(filepath):
+    '''
+    Reads fits file of the observed data
+    '''
+    with fits.open(filepath) as data_file:
+        data_file.verify('fix')
+        data = data_file['SPECTRA'].data
+        exposure_time = data_file['SPECTRUM'].header['EXPOSURE']
+    counts = data['COUNTS']
+    channels = data['CHANNEL']
+    return counts, channels, exposure_time
