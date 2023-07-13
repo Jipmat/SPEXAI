@@ -145,16 +145,27 @@ def read_energy_file(filepath, min_energy=None, max_energy=None):
     return spec_e_cent, spec_e_lo, spec_e_hi
 
 
-def load_models(elements, file_dir, model_names):
+def load_models(elements, file_dir, model_names, models):
     ''' 
-    Read all the trained models of alll the elements and put them in ModuleDict with the elements name as key (Z__).
+    Read all the trained models of all the elements and put them in ModuleDict with the elements name as key (Z__).
+    Parameters
+    ----------
+    elements: array of int between 1 and 30
+        atom number of elements
+    file_dir: str
+        directory name of the best NN models
+    model_names: list of str
+        list of the model names
+    models: list of torch.nn.Module() objects
+        The model class with the same NN architecture as the model names
+
     '''
     dic = {}
     for i in elements:
         added = False
-        for j in model_names:
+        for name, model in zip(model_names, models):
             try:
-                dic['Z'+str(i)] = torch.load(file_dir+'Z'+str(i)+'/'+j)
+                dic['Z'+str(i)] = model.load_state_dict(torch.load(file_dir+'Z'+str(i)+'/'+name))
                 added = True
             except:
                 pass
@@ -165,12 +176,14 @@ def load_models(elements, file_dir, model_names):
 
 def make_sparsex(x, n=300):
     ''' '
-    will fill a sparse matrix with energies around a central energy and will transform the energies with a factor of itself
+    Will fill a sparse matrix with energies around a central energy and will transform the energies with a factor of itself
+    Parameters
+    ----------
+    x: tensor
+        energy grid spectra
+    n: int, default:300
+        kernel size of the convolution
     '''
-    #how to fill a sparse matrix
-    #torch tensor([row_index, column_index])
-
-
     collumn_index = torch.tensor([])
     row_index = torch.tensor([])
     x_values = torch.tensor([])

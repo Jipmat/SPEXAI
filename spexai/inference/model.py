@@ -5,12 +5,15 @@ from torchinterp1d import interp1d as interp1d_torch
 import scipy.constants as constants
 
 import write_tensors
+from spexai.trian.neuralnetwork import FFN, CNN
+
 
 torch.set_default_dtype(torch.float32)
 
 
 class CombinedModel(nn.Module):
-    def __init__(self, Luminosity_Distance=None, fdir = 'restructure_spectra', fdir_bestmodels= 'Best_NN/',  shape=(50125,), list_elements=np.arange(1, 31), possible_modelnames=[]):
+    def __init__(self, Luminosity_Distance=None, fdir = 'restructure_spectra', fdir_bestmodels= 'Best_NN/',
+                   shape=(50125,), list_elements=np.arange(1, 31), possible_modelnames=[], possible_models=[]):
         super(CombinedModel, self).__init__()
         '''
         torch nn.Modele object to calulate a full observed X-ray spectra with NN-emulators of the individual elements
@@ -28,23 +31,27 @@ class CombinedModel(nn.Module):
             array of the atom number of all the elements in the combined model
         possible_modelnames: list of str, default:[]
             add str names of the NN emulators of the individual elements.
+        possible_modelnames: list of torch.nn.Module, default:[]
+            add the model class of the NN emulators of the individual elements.
         '''
         self.fdir = fdir
 
         #add most comen NN models
-        possible_modelnames.append(['FF_out(50125)_nL(3|150)_Act(tanh)_p(0.0)', 'FF_out(50125)_nL(3|150)_Act(nonlin)_p(0.0)', 'FF_out(50125)_nL(3|250)_Act(nonlin)_p(0.0)'])
-        self.models = self.load_models(list_elements, fdir_bestmodels, possible_modelnames)
+        possible_modelnames.append(['FF_out(50125)_nL(3|150)_Act(tanh)_p(0.0)', 'FF_out(50125)_nL(3|150)_Act(nonlin)_p(0.0)',
+                                    'FF_out(50125)_nL(3|250)_Act(nonlin)_p(0.0)', 'CNN_out(50125)_nFF(2|150)_nCNN(1|75|100)_Act(tanh)_p(0.0)'])
+        possible_models.append([FFN(1,50125,3,150,'tanh'), FFN(1,50125,3,150,'nonlin'), FFN(1,50125,3,250,'nonlin'), CNN(1,50125, 2, 150, 1, 100, 75, 'tanh')])
+        self.models = write_tensors.load_models(list_elements, fdir_bestmodels, possible_modelnames, possible_models)
 
         #read in mean and stdev for inverse standard scaling
         self.means = nn.ParameterDict({})
         self.scales = nn.ParameterDict({})
         for key in self.models.keys():
-            dir_mean = str(self.fdir+'/'+str(key)+'_mean')
-            mean = torch.load(dir_mean)
+            dir_mean = str(self.fdir+'/'+str(key)+'_mean.txt')
+            mean = torch.from_numpy(np.loadtxt(dir_mean))
             self.means[key] = mean
 
-            dir_scale  =  str(self.fdir+'/'+str(key)+'_scale')
-            scale =  torch.load(dir_scale)
+            dir_scale  =  str(self.fdir+'/'+str(key)+'_scale.txt')
+            scale =  torch.from_numpy(np.loadtxt(dir_scale))
             self.scales[key] = scale
 
         self.diag_index = torch.arange(len(self.x)).view(1,-1).repeat(2,1)
@@ -118,32 +125,6 @@ class CombinedModel(nn.Module):
         output = torch.mul(output, self.spec_resp)
         output = torch.sparse.mm(self.rm, output.view(-1,1)).flatten()
         return output
-    
-
-    def load_models(self, elements, file_dir, model_names):
-        ''' 
-        Read all the trained models of all the elements and put them in ModuleDict with the elements name as key (Z__).
-        Parameters
-        ----------
-        elements: array of int between 1 and 30
-            atom number of elements
-        file_dir: str
-            directory name of the best NN models
-        model_names: list of str
-            list of the model names
-        '''
-        dic = {}
-        for i in elements:
-            added = False
-            for j in model_names:
-                try:
-                    dic['Z'+str(i)] = torch.load(file_dir+'Z'+str(i)+'/'+j)
-                    added = True
-                except:
-                    pass
-            if added is False:
-                print(f'The model name for element {i} is False')
-        return torch.nn.ModuleDict(dic)
     
 
     def load_rm(self, filepath):

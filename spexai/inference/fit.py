@@ -90,13 +90,13 @@ class FitTempDist(object):
         interval_data = np.where(channels > self.e_max, False, interval_data)
 
         self.counts = (counts[interval_data]).astype(int)
-        self.intensity = counts[interval_data]/dx[interval_data]/exp_time
+        self.intensity = counts[interval_data]/dx[interval_data]/self.exp_time
         self.energy = chan_ecent[self.interval]
         self.dx = dx[interval_data]
 
     def fit_spectra(self, add_params=None, add_position=None):
         ''' 
-        Fit the spectrum with emcee method
+        Fit the spectrum with emcee method and prints the autocorrolation time
         Paramaters
         ----------
         add_params: list of str
@@ -145,15 +145,20 @@ class FitTempDist(object):
 
         axes[-1].set_xlabel("step number")
     
-    def cornerplot(self, discard, filename='fit_model', thin=15, true_values=None):
+    def cornerplot(self, discard, fitdir=None, thin=15, true_values=None):
         '''
-        plot a scatterplot
+        shows a corner plot of the sampled posterior for all the parameters,
+        can also save the sampled posterior as .csv file and overplot the true values
         Parameters
         ----------
         discard: int
-            number of parameters to discard
-        true_values: dictionary
-            keys is names of the paramters and values is the true value
+            number of the steps from the front of the chain to discard
+        fitdir: str, default:None
+            file directotory to save .csv of the parameters from the sampled posterior
+        thin: int, default:15
+             takes the chain and returns every nth sample
+        true_values: dict, default:None
+            Dictonary of the trua values of the parameters with keys is names of the parameters
         '''
         self.df = None
         self.fit_distribution = self.sampler.get_chain(discard=discard, thin=thin, flat=True)
@@ -162,7 +167,8 @@ class FitTempDist(object):
         
 
         g = sns.pairplot(self.df, hue="method", plot_kws={"s": 12})
-        self.df.to_csv(filename)
+        if fitdir is not None:
+            self.df.to_csv(fitdir)
 
         
         #if true_values are given overplot them

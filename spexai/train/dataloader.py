@@ -250,8 +250,8 @@ class SpexAIMemoryDataset(Dataset):
         '''
         Save the scaler mean and scale as a tensor.
         '''
-        torch.save(torch.tensor(self.scaler_flux.scale_, requires_grad=True, dtype=torch.float32), 'restructure_spectra/Z'+str(self.element)+'_scale')
-        torch.save(torch.tensor(self.scaler_flux.mean_, requires_grad=True, dtype=torch.float32), 'restructure_spectra/Z'+str(self.element)+'_mean')
+        np.savetxt(np.array(self.scaler_flux.scale_, requires_grad=True, dtype=torch.float32), 'Best_NN/Z'+str(self.element)+'_scale.txt')
+        np.savetxt(np.array(self.scaler_flux.mean_, requires_grad=True, dtype=torch.float32), 'Best_NN/Z'+str(self.element)+'_mean.txt')
 
 def fraction(pred, test, absolute=True):
     if absolute is True:

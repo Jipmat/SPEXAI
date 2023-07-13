@@ -275,12 +275,12 @@ class NeuralNetworkTrainer(object):
         
         if self.name is not None:
             torch.save(self.model, 'log/'+'Z'+str(self.element)+'/'+date_name+'/'+self.name)
-            np.savetxt('log/'+'Z'+str(self.element)+'/'+date_name+'/'+self.name+'_Loss_train', self.loss_train)
-            np.savetxt('log/'+'Z'+str(self.element)+'/'+date_name+'/'+self.name+'_Loss_test', self.loss_test)
+            np.savetxt('log/'+'Z'+str(self.element)+'/'+date_name+'/'+self.name+'_Loss_train.txt', self.loss_train)
+            np.savetxt('log/'+'Z'+str(self.element)+'/'+date_name+'/'+self.name+'_Loss_test.txt', self.loss_test)
         else:
             torch.save(self.model, 'log/'+'Z'+str(self.element)+'/'+date_name+'/'+str(self.model))
-            np.savetxt('log/'+'Z'+str(self.element)+'/'+date_name+'/'+str(self.model)+'_Loss_train', self.loss_train)
-            np.savetxt('log/'+'Z'+str(self.element)+'/'+date_name+'/'+str(self.model)+'_Loss_test', self.loss_test)
+            np.savetxt('log/'+'Z'+str(self.element)+'/'+date_name+'/'+str(self.model)+'_Loss_train.txt', self.loss_train)
+            np.savetxt('log/'+'Z'+str(self.element)+'/'+date_name+'/'+str(self.model)+'_Loss_test.txt', self.loss_test)
     
     def load(self, model_dir):
         '''
