@@ -165,7 +165,7 @@ def load_models(elements, file_dir, model_names, models):
         added = False
         for name, model in zip(model_names, models):
             try:
-                dic['Z'+str(i)] = model.load_state_dict(torch.load(file_dir+'Z'+str(i)+'/'+name))
+                dic['Z'+str(i)] = model.load_state_dict(torch.load(file_dir+'Z'+str(i)+'/'+name+'.pt'))
                 added = True
             except:
                 pass

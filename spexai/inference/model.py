@@ -12,7 +12,7 @@ torch.set_default_dtype(torch.float32)
 
 
 class CombinedModel(nn.Module):
-    def __init__(self, Luminosity_Distance=None, fdir = 'restructure_spectra', fdir_bestmodels= 'Best_NN/',
+    def __init__(self, Luminosity_Distance=None,  fdir_nn= 'neuralnetworks/',
                    shape=(50125,), list_elements=np.arange(1, 31), possible_modelnames=[], possible_models=[]):
         super(CombinedModel, self).__init__()
         '''
@@ -34,23 +34,22 @@ class CombinedModel(nn.Module):
         possible_modelnames: list of torch.nn.Module, default:[]
             add the model class of the NN emulators of the individual elements.
         '''
-        self.fdir = fdir
 
         #add most comen NN models
         possible_modelnames.append(['FF_out(50125)_nL(3|150)_Act(tanh)_p(0.0)', 'FF_out(50125)_nL(3|150)_Act(nonlin)_p(0.0)',
                                     'FF_out(50125)_nL(3|250)_Act(nonlin)_p(0.0)', 'CNN_out(50125)_nFF(2|150)_nCNN(1|75|100)_Act(tanh)_p(0.0)'])
         possible_models.append([FFN(1,50125,3,150,'tanh'), FFN(1,50125,3,150,'nonlin'), FFN(1,50125,3,250,'nonlin'), CNN(1,50125, 2, 150, 1, 100, 75, 'tanh')])
-        self.models = write_tensors.load_models(list_elements, fdir_bestmodels, possible_modelnames, possible_models)
+        self.models = write_tensors.load_models(list_elements, fdir_nn, possible_modelnames, possible_models)
 
         #read in mean and stdev for inverse standard scaling
         self.means = nn.ParameterDict({})
         self.scales = nn.ParameterDict({})
         for key in self.models.keys():
-            dir_mean = str(self.fdir+'/'+str(key)+'_mean.txt')
+            dir_mean = str(fdir_nn+str(key)+'/'+str(key)+'_mean.txt')
             mean = torch.from_numpy(np.loadtxt(dir_mean))
             self.means[key] = mean
 
-            dir_scale  =  str(self.fdir+'/'+str(key)+'_scale.txt')
+            dir_scale  =  str(fdir_nn+str(key)+'/'+str(key)+'_scale.txt')
             scale =  torch.from_numpy(np.loadtxt(dir_scale))
             self.scales[key] = scale
 

@@ -274,11 +274,11 @@ class NeuralNetworkTrainer(object):
             pass
         
         if self.name is not None:
-            torch.save(self.model, 'log/'+'Z'+str(self.element)+'/'+date_name+'/'+self.name)
+            torch.save(self.model.state_dict(), 'log/'+'Z'+str(self.element)+'/'+date_name+'/'+self.name+'.pt')
             np.savetxt('log/'+'Z'+str(self.element)+'/'+date_name+'/'+self.name+'_Loss_train.txt', self.loss_train)
             np.savetxt('log/'+'Z'+str(self.element)+'/'+date_name+'/'+self.name+'_Loss_test.txt', self.loss_test)
         else:
-            torch.save(self.model, 'log/'+'Z'+str(self.element)+'/'+date_name+'/'+str(self.model))
+            torch.save(self.model.state_dict(), 'log/'+'Z'+str(self.element)+'/'+date_name+'/'+str(self.model)+'.pt')
             np.savetxt('log/'+'Z'+str(self.element)+'/'+date_name+'/'+str(self.model)+'_Loss_train.txt', self.loss_train)
             np.savetxt('log/'+'Z'+str(self.element)+'/'+date_name+'/'+str(self.model)+'_Loss_test.txt', self.loss_test)
     
