@@ -183,7 +183,7 @@ class TempDist(CombinedModel):
         velocity: float
             velocity broading of turbulance [km/sec]
         '''
-        dx = torch.diff(temp_grid)[0]
+        dx = torch.mean(torch.diff(temp_grid))
         if self.LD is not None:
             norm = norm*(1e22/self.LD)**2
         y = torch.zeros(self.shape, dtype=torch.float32, device=temp_grid.device)

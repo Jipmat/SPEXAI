@@ -57,9 +57,9 @@ class FitTempDist(object):
         self.prior = prior
 
         #interval
-        self.int_temp = [0.1,10]
-        self.int_logz = [-10, .3]
-        self.int_stdvt = [-10, 1]
+        self.int_temp = [0.2,10]
+        self.int_logz = [-10, 1]
+        self.int_stdvt = [-5, 1]
         self.int_norm = [1e5, 1e15]
         self.int_vel = [0, 600]
 
@@ -197,12 +197,13 @@ class FitTempDist(object):
                     if key == f'Z{i} [Z{i}/Fe]':
                         dict_abund[f'Z{i}'] = sample['Metalicity [Fe/H]']*sample[f'Z{i} [Z{i}/Fe]']
 
-            low = max(sample['Temperature [KeV]']-4*10**sample['Temp Stdev log[KeV]'], 0.1)
-            high = min(sample['Temperature [KeV]']+4*10**sample['Temp Stdev log[KeV]'],10)
+            low = max(sample['Temperature [KeV]']-5*10**sample['Temp Stdev log[KeV]'], 0.2)
+            high = min(sample['Temperature [KeV]']+5*10**sample['Temp Stdev log[KeV]'],10)
             temp_grid = torch.linspace(low,
                                         high, 
-                                        400, dtype=torch.float32, device='cuda')
+                                        500, dtype=torch.float32, device='cuda')
             temp_dist = self.normal_dist(temp_grid, sample['Temperature [KeV]'], 10**sample['Temp Stdev log[KeV]'])
+            temp_dist = temp_dist/torch.sum(temp_dist*torch.mean(torch.diff(temp_grid)))
             with torch.no_grad():
                 sample_spectra = self.combined_model(temp_grid, temp_dist, dict_abund, sample['Redshift [log(z)]'], 
                            sample['Normalisation'], sample['Velocity [km/sec]'])
@@ -311,7 +312,7 @@ class FitTempDist(object):
         Normal Distribution
         '''
         sd = torch.tensor(sd, dtype=torch.float32, device=x.device)
-        prob_density = (torch.sqrt(torch.tensor(2*np.pi, dtype=torch.float32, device=x.device)*sd**2)) * torch.exp(-0.5*((x-torch.tensor(mean, dtype=torch.float32, device=x.device))/sd)**2)
+        prob_density = 1/(torch.sqrt(torch.tensor(2*np.pi, dtype=torch.float32, device=x.device)*sd**2)) * torch.exp(-0.5*((x-torch.tensor(mean, dtype=torch.float32, device=x.device))/sd)**2)
         return prob_density
     
     def flat_to_nested_dict(self, dct: dict) -> dict:
