@@ -233,7 +233,7 @@ class FitTempDist(object):
         calculates the log prior for the parameters everthing is uniform except the metalicty.
         '''
         if (self.int_temp[0] > params['Temperature [KeV]'] or self.int_temp[1] < params['Temperature [KeV]']
-            or self.int_logz[0] > params['Temp Stdev log[KeV]'] or self.int_logz[1] < params['Temp Stdev log[KeV]']
+            or self.int_stdvt[0] > params['Temp Stdev log[KeV]'] or self.int_stdvt[1] < params['Temp Stdev log[KeV]']
             or self.int_logz[0] > params['Redshift [log(z)]'] or self.int_logz[1] < params['Redshift [log(z)]']
             or self.int_norm[0] > params['Normalisation'] or self.int_norm[1] < params['Normalisation']
             or self.int_vel[0] > params['Velocity [km/sec]'] or self.int_vel[1] < params['Velocity [km/sec]']
