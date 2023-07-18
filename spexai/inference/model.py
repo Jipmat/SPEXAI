@@ -4,8 +4,8 @@ import torch.nn as nn
 from torchinterp1d import interp1d as interp1d_torch
 import scipy.constants as constants
 
-import write_tensors
-from spexai.trian.neuralnetwork import FFN, CNN
+from spexai.inference import write_tensors
+from spexai.train.neuralnetwork import FFN, CNN
 
 
 torch.set_default_dtype(torch.float32)
@@ -14,7 +14,6 @@ torch.set_default_dtype(torch.float32)
 class CombinedModel(nn.Module):
     def __init__(self, Luminosity_Distance=None,  fdir_nn= 'neuralnetworks/',
                    shape=(50125,), list_elements=np.arange(1, 31), possible_modelnames=[], possible_models=[]):
-        super(CombinedModel, self).__init__()
         '''
         torch nn.Modele object to calulate a full observed X-ray spectra with NN-emulators of the individual elements
         Parameters
@@ -34,12 +33,19 @@ class CombinedModel(nn.Module):
         possible_modelnames: list of torch.nn.Module, default:[]
             add the model class of the NN emulators of the individual elements.
         '''
+        super(CombinedModel, self).__init__()
 
         #add most comen NN models
-        possible_modelnames.append(['FF_out(50125)_nL(3|150)_Act(tanh)_p(0.0)', 'FF_out(50125)_nL(3|150)_Act(nonlin)_p(0.0)',
-                                    'FF_out(50125)_nL(3|250)_Act(nonlin)_p(0.0)', 'CNN_out(50125)_nFF(2|150)_nCNN(1|75|100)_Act(tanh)_p(0.0)'])
-        possible_models.append([FFN(1,50125,3,150,'tanh'), FFN(1,50125,3,150,'nonlin'), FFN(1,50125,3,250,'nonlin'), CNN(1,50125, 2, 150, 1, 100, 75, 'tanh')])
-        self.models = write_tensors.load_models(list_elements, fdir_nn, possible_modelnames, possible_models)
+        possible_modelnames.append(['FF_out(50125)_nL(3|150)_Act(tanh)_p(0.0)', 
+                                    'FF_out(50125)_nL(3|150)_Act(nonlin)_p(0.0)',
+                                    'FF_out(50125)_nL(3|250)_Act(nonlin)_p(0.0)', 
+                                    'CNN_out(50125)_nFF(2|150)_nCNN(1|75|100)_Act(tanh)_p(0.0)'])
+        possible_models.append([FFN(1,50125,3,150,'tanh'), 
+                                FFN(1,50125,3,150,'nonlin'), 
+                                FFN(1,50125,3,250,'nonlin'), 
+                                CNN(1,50125, 2, 150, 1, 100, 75, 'tanh')])
+        self.models = write_tensors.load_models(list_elements, fdir_nn, 
+                                                possible_modelnames, possible_models)
 
         #read in mean and stdev for inverse standard scaling
         self.means = nn.ParameterDict({})
@@ -53,7 +59,8 @@ class CombinedModel(nn.Module):
             scale =  torch.from_numpy(np.loadtxt(dir_scale))
             self.scales[key] = scale
 
-        self.diag_index = torch.arange(len(self.x)).view(1,-1).repeat(2,1)
+#        self.diag_index = torch.arange(len(self.x)).view(1,-1).repeat(2,1)
+        self.diag_index = torch.arange(shape[0]).view(1,-1).repeat(2,1)
         self.LD = Luminosity_Distance
         self.shape = shape
         
@@ -93,15 +100,15 @@ class CombinedModel(nn.Module):
         return torch.sparse.mm(normal_matrix.to(spectra.device), spectra_dx).flatten()
 
 
-    def forward(self, temp, abundancies, logz, norm, velocity):
+    def forward(self, temp, abundances, logz, norm, velocity):
         '''
         Calculates the simulated spectra with the NN emulator of the individual elements
         Parameters
         ----------
         temp: tesor dtype:torch.float32 device:CombinedModel.device
             Temperature in [kev]
-        abundancies: torch.nn.ModuleDict
-            dictonary of the element aboundancies in solar abundancies. With dictonary key the Z__ element number.
+        abundances: torch.nn.ModuleDict
+            dictonary of the element aboundancies in solar abundances. With dictonary key the Z__ element number.
         logz: float
             log_10 of redshift (z) between -10 and 1
         norm: float
@@ -113,8 +120,8 @@ class CombinedModel(nn.Module):
             norm = norm*(1e22/self.LD)**2
         y = torch.zeros(self.shape, dtype=torch.float32, device=temp.device)
         for i in np.arange(1,6):
-            abundancies[f'Z{i}'] = 1
-        for key, value in abundancies.items():
+            abundances[f'Z{i}'] = 1
+        for key, value in abundances.items():
             value = torch.tensor(value, dtype=torch.float32, device=temp.device)
             model = self.models[key].to(temp.device)
             y += torch.multiply(torch.pow(torch.tensor(10, dtype=torch.float32, device=temp.device), torch.add(torch.multiply(model(temp).flatten(), self.scales[key]), self.means[key])), value)
@@ -159,13 +166,32 @@ class CombinedModel(nn.Module):
 
     
 class TempDist(CombinedModel):
-    def __init__(self):
-        super(CombinedModel, self).__init__()
+    def __init__(self, **kwargs):
         '''
-        Subclass of CombinedModel for Temperature Distributions
-        '''
+        Subclass of CombinedModel for Temperature Distributions. Inherits parameters 
+        from its `CombinedModel` superclass. 
 
-    def forward(self, temp_grid, temp_dist, abundancies, logz, norm, velocity):
+        Parameters
+        ----------
+        Luminosity_Distance: float, default:None
+            Luminosity Distantace of the source in [m]
+        fdir: str, default:'restructure_spectra'
+            directory of torch object to restucture spectra
+        fdir_bestmodels: str, default:'Best_NN/'
+            directory of NN models of the elements
+        shape: tuple, default:(50124,)
+            shape of the output of the model
+        list_elements: array of int, default:np.arange(1, 31)
+            array of the atom number of all the elements in the combined model
+        possible_modelnames: list of str, default:[]
+            add str names of the NN emulators of the individual elements.
+        possible_modelnames: list of torch.nn.Module, default:[]
+            add the model class of the NN emulators of the individual elements.
+
+        '''
+        super(TempDist, self).__init__(**kwargs)
+
+    def forward(self, temp_grid, temp_dist, abundances, logz, norm, velocity):
         '''
         Calculates the simulated spectra with the NN emulator of the individual elements
         Parameters
@@ -174,8 +200,8 @@ class TempDist(CombinedModel):
             tensor of all the temperatures to calculate the spectra for
         temp_dist: tesor
             tensor of all the values to multiply the temperatures of the grid with
-        abundancies: torch.nn.ModuleDict
-            dictonary of the element aboundancies in solar abundancies. With dictonary key the Z__ element number.
+        abundances: torch.nn.ModuleDict
+            dictonary of the element aboundancies in solar abundances. With dictonary key the Z__ element number.
         logz: float
             log_10 of redshift (z) between -10 and 1
         norm: float
@@ -188,8 +214,8 @@ class TempDist(CombinedModel):
             norm = norm*(1e22/self.LD)**2
         y = torch.zeros(self.shape, dtype=torch.float32, device=temp_grid.device)
         for i in np.arange(1,6):
-            abundancies[f'Z{i}'] = 1
-        for key, value in abundancies.items():
+            abundances[f'Z{i}'] = 1
+        for key, value in abundances.items():
             value = torch.tensor(value, dtype=torch.float32, device=temp_grid.device)
             model = self.models[key].to(temp_grid.device)
             y += torch.sum(torch.multiply(
