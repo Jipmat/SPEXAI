@@ -145,7 +145,7 @@ def read_energy_file(filepath, min_energy=None, max_energy=None):
     return spec_e_cent, spec_e_lo, spec_e_hi
 
 
-def load_models(elements, file_dir, model_names, models):
+def load_models(elements, file_dir, model_names, models, device):
     ''' 
     Read all the trained models of all the elements and put them in ModuleDict with the elements name as key (Z__).
     Parameters
@@ -163,9 +163,10 @@ def load_models(elements, file_dir, model_names, models):
     dic = {}
     for i in elements:
         added = False
-        for name, model in zip(model_names, models):
+        for name, model in zip(np.array(model_names).flatten(), np.array(models).flatten()):
             try:
-                dic['Z'+str(i)] = model.load_state_dict(torch.load(file_dir+'Z'+str(i)+'/'+name+'.pt'))
+                model.load_state_dict(torch.load(file_dir+'Z'+str(i)+'/'+name+'.pt', map_location=device))
+                dic['Z'+str(i)] = model
                 added = True
             except:
                 pass
@@ -189,18 +190,18 @@ def make_sparsex(x, n=300):
     x_values = torch.tensor([])
 
     for i, x_i in enumerate(x):
-        full_col = torch.arange(-int((n/25)*x_i),int((n/25)*x_i), dtype=torch.int)+i
+        full_col = torch.arange(-int((n/25)*x_i), int((n/25)*x_i), dtype=torch.long)+i
         full_col = full_col[full_col >= 0]
         col = full_col[full_col <= len(x)-1]
         row = torch.ones_like(col)*i
         x_row = (x[col]-x_i)/x_i
 
-        collumn_index = torch.cat((collumn_index, col)).type(torch.int)
+        collumn_index = torch.cat((collumn_index, col)).type(torch.long)
         row_index = torch.cat((row_index, row))
         x_values = torch.cat((x_values, x_row))
 
     index = torch.cat((row_index.view(1,-1), collumn_index.view(1,-1)))
-    sparse_x = torch.sparse_coo_tensor(index, x_values, (len(x), len(x)))
+    sparse_x = torch.sparse_coo_tensor(index, x_values, (len(x), len(x))).type(torch.float32)
     return sparse_x
 
 def read_data(filepath):
@@ -209,7 +210,7 @@ def read_data(filepath):
     '''
     with fits.open(filepath) as data_file:
         data_file.verify('fix')
-        data = data_file['SPECTRA'].data
+        data = data_file['SPECTRUM'].data
         exposure_time = data_file['SPECTRUM'].header['EXPOSURE']
     counts = data['COUNTS']
     channels = data['CHANNEL']

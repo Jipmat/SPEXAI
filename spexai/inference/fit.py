@@ -9,28 +9,18 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 font = {'size'   : 16}
 matplotlib.rc('font', **font)
+plt.style.use('seaborn-whitegrid')
 
-import write_tensors
+from spexai.inference import write_tensors
+from spexai.inference import model
 
-import spexai.inference.model as model
-
-class FitTempDist(object):
-    def __init__(self, nwalkers, nsteps, Luminosity_Distance = None,
-                 prior= {'temp': {'mu': 5, 'sigma': 2}, 'stdevtemp': {'mu': -5, 'sigma': 2}, 'met':  {'mu': 1, 'sigma': .3}, 'Z_':{'mu': 1, 'sigma': .3},
-                 'vel':  {'mu': 100, 'sigma': 50},  'norm': {'mu': 1e10, 'sigma': 1e10}, 'logz': {'mu': -5,  'sigma': 2}},
-                 e_min=None, e_max=None):
+class Fit(object):
+    def __init__(self, nwalkers, nsteps, prior, Luminosity_Distance = None,
+                 e_min=None, e_max=None, fdir_nn='neuralnetworks/'):
         '''
         Class to be able fit a spectrum with a temperature distribution in the form of a gaussion
         Parameters
         ----------
-        spectra: array
-            spectra of data in counts/sec/kev
-        energy_data: array
-            center energy bins of data
-        dx: array
-            width energy bins of data
-        exp_time: float
-            exposure time of the data
         nwalkers: int
             number walkers for the EMCEE fit
         nsteps: int
@@ -39,8 +29,8 @@ class FitTempDist(object):
             Luminosity Distance of the source in [m]
         prior: dir
             Intial guess/prior of the variables in the form of {'var_name': {'mu':float, 'sigma':float}}
-        fdir: str default:'restructure_spectra'
-            directory of torch object to restucture spectra
+        fdir_NN: str default:'neuralnetworks/'
+            directory of torch object to restucture spectra and best nn
         e_min, e_max: float default:None
             minium or maximum energy
 
@@ -50,62 +40,91 @@ class FitTempDist(object):
         self.e_max = e_max
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        self.combined_model = model.TempDist(Luminosity_Distance=Luminosity_Distance).to(self.device)
+        print('Using', self.device)
+        self.combined_model = model.CombinedModel(Luminosity_Distance=Luminosity_Distance, fdir_nn=fdir_nn, device=self.device)
 
         #prior
         self.prior = prior
 
+        self.interval = {}
+
         #interval
-        self.int_temp = [0.2,10]
-        self.int_logz = [-10, 1]
-        self.int_stdvt = [-5, 1]
-        self.int_norm = [1e5, 1e15]
-        self.int_vel = [0, 600]
+        self.interval['temp'] = [0.2, 10]
+        self.interval['logz'] = [-10, 1]
+        self.interval['norm'] = [1e5, 1e15]
+        self.interval['vel'] = [0, 600]
 
         #fit parameters
         self.nwalkers = nwalkers
         self.nsteps = nsteps
 
-        self.param_names = ['Temperature [KeV]', 'Temp Stdev log[KeV]','Redshift [log(z)]', 'Velocity [km/sec]', 'Metalicity [Fe/H]', 'Normalisation']
+        self.param_names = list(self.prior.keys())
 
 
     def load_data(self, filepath):
         '''reads in the fits file of the data'''
         counts, channels, exp_time  = write_tensors.read_data(filepath)
-        dx = self.combined_model.new_dx
-        chan_ecent = self.combined_model.x
-        
+        chan_diff = self.combined_model.chan_diff.numpy()
+        chan_cent = self.combined_model.chan_cent.numpy()
         self.exp_time = exp_time
 
         #cut off spectra outside of e_min and e_max
         if self.e_min is None:
-            self.e_min= min(channels)
+            self.e_min= min(chan_cent)
         if self.e_max is None:
-            self.e_max = max(channels)
+            self.e_max = max(chan_cent)
 
-        interval = np.where(chan_ecent < self.e_min, False, True)
-        self.interval = np.where(chan_ecent > self.e_max, False, interval)
-        interval_data = np.where(channels < self.e_min, False, True)
-        interval_data = np.where(channels > self.e_max, False, interval_data)
+        intv = np.where(chan_cent < self.e_min, False, True)
+        self.int = np.where(chan_cent > self.e_max, False, intv)
 
-        self.counts = (counts[interval_data]).astype(int)
-        self.intensity = counts[interval_data]/dx[interval_data]/self.exp_time
-        self.energy = chan_ecent[self.interval]
-        self.dx = dx[interval_data]
 
-    def fit_spectra(self, add_params=None, add_position=None):
+        self.counts = (counts[self.intv]).astype(int)
+        self.intensity = counts[self.intv]/chan_diff[self.intv]/self.exp_time
+        self.energy = chan_cent[self.intv]
+        self.chan_diff = chan_diff[self.intv]
+
+    def sim_data(self, params, exp_time=50000):
+        '''creates simulated data from the neural network model'''
+        dict_abund = {}
+        for i in torch.arange(6,31):
+            dict_abund[f'Z{i}'] = params['met']
+            for key in params.keys():
+                if key == f'Z{i}':
+                    dict_abund[f'Z{i}'] = params['met']*params[f'Z{i}']
+
+        temp = torch.tensor([params['temp']], dtype=torch.float32, device=self.device)
+        with torch.no_grad():
+            spectra = self.combined_model(temp, dict_abund, params['logz'], 
+                                          params['norm'], params['vel']).cpu().detach().numpy()
+        
+        chan_diff = self.combined_model.chan_diff.numpy()
+        chan_cent = self.combined_model.chan_cent.numpy()
+        self.exp_time = exp_time
+
+        #cut off spectra outside of e_min and e_max
+        if self.e_min is None:
+            self.e_min= min(chan_cent)
+        if self.e_max is None:
+            self.e_max = max(chan_cent)
+
+        intv = np.where(chan_cent < self.e_min, False, True)
+        self.intv = np.where(chan_cent > self.e_max, False, intv)
+
+        self.counts = np.random.poisson(spectra*chan_diff*exp_time)[self.intv]
+        self.intensity = self.counts/chan_diff[self.int]/exp_time
+        self.energy = chan_cent[self.int]
+        self.chan_diff = chan_diff[self.int]
+
+    def fit_spectra(self, add_prior=None):
         ''' 
         Fit the spectrum with emcee method and prints the autocorrolation time
         Paramaters
         ----------
-        add_params: list of str
-            list of element names to fit to the ratio of iron in the form 'Z. [Z./Fe]' with '.' the atom number.
-        add_position: array
-            array of initial position with lenght of nwalkers
+        add_prior: array
+            dictonary of priors and inital positions in the form of {'Z.':{mu:float, sigma:float}} with '.' the atom number
         '''
-        if add_params is not None:
-            for i in add_params:
+        if add_prior is not None:
+            for i in add_prior.keys():
                 self.param_names.append(i)
 
         self.sampler = emcee.EnsembleSampler(
@@ -119,16 +138,121 @@ class FitTempDist(object):
                 }
             )
         
-        initialpos = np.concatenate((np.random.normal(self.prior['temp']['mu'],self.prior['temp']['sigma'], size=(1, self.sampler.nwalkers)),
-                                     np.random.normal(self.prior['stdevtemp']['mu'], self.prior['stdevtemp']['sigma'], size=(1, self.sampler.nwalkers)),
-                                     np.random.normal(self.prior['logz']['mu'], self.prior['logz']['sigma'], size=(1, self.sampler.nwalkers)),
-                                     np.random.normal(self.prior['vel']['mu'], self.prior['vel']['sigma'], size=(1, self.sampler.nwalkers)),
-                                     np.random.normal(self.prior['met']['mu'], self.prior['met']['sigma'], size=(1, self.sampler.nwalkers)),
-                                     np.random.normal(self.prior['norm']['mu'], self.prior['norm']['sigma'],  size=(1, self.sampler.nwalkers))), axis=0).T
-        if add_position is not None:
-            initialpos = np.concatenate((initialpos, add_position.T), axis=1)
+        initialpos = None
+        for i in self.prior.values():
+            if initialpos is None:
+                initialpos = np.random.normal(i['mu'],i['sigma'], size=(1, self.sampler.nwalkers)).T
+            else:
+                initialpos = np.concatenate((initialpos, np.random.normal(i['mu'],i['sigma'], size=(1, self.sampler.nwalkers)).T),
+                                             axis=1)
+
+        if add_prior is not None:
+            self.add_prior = add_prior
+            for i in self.add_prior.values():
+                initialpos = np.concatenate((initialpos, np.random.normal(i['mu'],i['sigma'], size=(1, self.sampler.nwalkers)).T), axis=1)
         self.sampler.run_mcmc(initialpos, nsteps=self.nsteps,  progress=True, store=True)
         print(self.sampler.get_autocorr_time())
+    
+    def log_prior(self, params):
+        ''' 
+        calculates the log prior for the parameters everthing is uniform except the metalicty.
+        Parameters
+        ----------
+        params: dict
+            A dictionary of the fit parameters with the parater names and there current values
+        '''
+        #check if the parameter fall in bounded interval        
+        for key in self.interval.keys():
+            if (self.interval[key][0] > params[key] or self.interval[key][1] < params[key]):
+                return -np.inf
+        if 0 > params['met']:
+            return -np.inf
+        
+        #caluculate priors on parameters
+        prior = 0
+        for key in self.prior.keys():
+            prior+= np.log(1.0/(np.sqrt(2*np.pi)*self.prior[key]['sigma']))-0.5*(params[key]-self.prior[key]['mu'])**2/self.prior[key]['sigma']**2
+
+        return prior
+
+    def log_likelihood(self, data, model, params):
+        ''' 
+        Calculaters the log_likelhood between the model and the data
+        Parameters
+        ----------
+        data: array
+        model: torch nn.Model() object
+            NN model
+        params: dir
+            directory of parameters names and values
+        '''
+        lp = self.log_prior(params)
+        if not np.isfinite(lp):
+            return -np.inf
+        
+        #intialize list of abunadace
+        dict_abund = {}
+        for i in torch.arange(6,31):
+            dict_abund[f'Z{i}'] = params['met']
+            for key in params.keys():
+                if key == f'Z{i}':
+                    dict_abund[f'Z{i}'] = params['met']*params[f'Z{i}']
+        
+        temp = torch.tensor([params['temp']], dtype=torch.float32, device=self.device)
+        #calculate spectra with NN
+        with torch.no_grad():
+            ymodel = model(temp, dict_abund, params['logz'], 
+                           params['norm'], params['vel'])
+
+        if np.any(np.isnan(lp + np.sum(poisson.logpmf(data, mu=(ymodel[self.intv].cpu().detach().numpy()*self.chan_diff*self.exp_time+1e-30))))):
+            print('error')
+
+        return lp + np.sum(poisson.logpmf(data, mu=(ymodel[self.intv].cpu().detach().numpy()*self.chan_diff*self.exp_time+1e-30)))
+    
+    def plot_spectrum(self, nsample=20):
+        ''' 
+        plots the spectra data against the distribution of best fits
+        Parmeters
+        ---------
+        nsample: int, default: 20
+            number of times sampeling from posterior
+        '''
+        fig = plt.figure(figsize=(20,10))
+        plt.plot(self.energy, self.intensity, alpha=0.5, label='Simulated Data')
+
+        for i in range(nsample):
+            sample = self.df.sample().squeeze().to_dict()
+            dict_abund = {}
+            for i in torch.arange(6,31):
+                dict_abund[f'Z{i}'] = sample['met']
+                for key in sample.keys():
+                    if key == f'Z{i}':
+                        dict_abund[f'Z{i}'] = sample['met']*sample[f'Z{i}']
+
+            temp = torch.tensor([sample['temp']], dtype=torch.float32, device=self.device)
+            with torch.no_grad():
+                sample_spectra = self.combined_model(temp, dict_abund, sample['logz'], 
+                           sample['norm'], sample['vel'])
+            plt.plot(self.energy, sample_spectra[self.intv].cpu().detach().numpy(), color='green', alpha = 0.05)
+        plt.plot(self.energy[0], sample_spectra[self.intv].cpu().detach().numpy()[0], color='green',  label='Models drawn from posterior')
+        plt.yscale('log')
+        plt.legend()
+        plt.xlabel('Energy [KeV]')
+        plt.ylabel('Counts/KeV/s')
+        plt.ylim(1e-2, max(self.intensity)*2)
+        plt.xlim(0.1, 15)
+        plt.show()
+
+        
+        for i in range(len(self.param_names)):
+            mcmc = np.percentile(self.fit_distribution[:, i], [16, 50, 84])
+            q = np.diff(mcmc)
+            txt = f"{self.param_names[i]} = {mcmc[1]}_(-{q[0]})^(+{q[1]})"
+            print(txt)
+            # The below only works in Visual Studio Code
+            #txt = "\mathrm{{{3}}} = {0:.5f}_{{-{1:.5f}}}^{{{2:.5f}}}"
+            #txt = txt.format(mcmc[1], q[0], q[1], self.param_names[i])
+            #display(Math(txt))
 
     def plot_timeseries(self):
         '''
@@ -163,138 +287,28 @@ class FitTempDist(object):
         self.df = None
         self.fit_distribution = self.sampler.get_chain(discard=discard, thin=thin, flat=True)
         self.df = pd.DataFrame(self.fit_distribution, columns=self.param_names)
-        self.df['method']= 'EMCEE'
-        
+        fig = plt.figure()
+        g = sns.PairGrid(self.df, diag_sharey=False, corner=True, layout_pad=0.25, despine=False)
+        # g.map_lower(sns.scatterplot,  size=.2)
+        g.map_lower(sns.kdeplot, cmap="Blues")
+        g.map_diag(sns.histplot, stat='density')
+        g.map_diag(sns.kdeplot,  color="k")
 
-        g = sns.pairplot(self.df, hue="method", plot_kws={"s": 12})
+        #save dataframe
         if fitdir is not None:
-            self.df.to_csv(fitdir)
+            self.df.to_csv(fitdir+'.csv')
 
-        
         #if true_values are given overplot them
         if true_values is not None:
+            j = len(true_values)
             # Loop through each subplot in the pairplot
             for i, ax in enumerate(g.axes.flat):
-                if i%len(self.param_names)!=i//len(self.param_names):
-                    ax.axhline(true_values[self.param_names[i//len(self.param_names)]], ls='--', color='k')
-                ax.axvline(true_values[self.param_names[i%len(self.param_names)]], ls='--', color='k')
+                if ax is not None:
+                    ax.axvline(true_values[i%j], ls='--', color='red')
+                    if i%j!=i//j:
+                        ax.axhline(true_values[i//j], ls='--', color='red')
+                        ax.scatter(true_values[i%j],true_values[i//j], marker=",",color='red')
 
-
-    def plot_spectrum(self):
-        ''' 
-        plots the spectra data against the distribution of best fits
-        '''
-        fig = plt.figure(figsize=(20,10))
-        plt.plot(self.energy.detach().numpy(), self.intensity
-                 , alpha=0.5, label='Simulated Data')
-
-        for i in range(100):
-            sample = self.df.sample().squeeze()[:-1].to_dict()
-            dict_abund = {}
-            for i in torch.arange(6,31):
-                dict_abund[f'Z{i}'] = sample['Metalicity [Fe/H]']
-                for key in sample.keys():
-                    if key == f'Z{i} [Z{i}/Fe]':
-                        dict_abund[f'Z{i}'] = sample['Metalicity [Fe/H]']*sample[f'Z{i} [Z{i}/Fe]']
-
-            low = max(sample['Temperature [KeV]']-5*10**sample['Temp Stdev log[KeV]'], 0.2)
-            high = min(sample['Temperature [KeV]']+5*10**sample['Temp Stdev log[KeV]'],10)
-            temp_grid = torch.linspace(low,
-                                        high, 
-                                        500, dtype=torch.float32, device='cuda')
-            temp_dist = self.normal_dist(temp_grid, sample['Temperature [KeV]'], 10**sample['Temp Stdev log[KeV]'])
-            temp_dist = temp_dist/torch.sum(temp_dist*torch.mean(torch.diff(temp_grid)))
-            with torch.no_grad():
-                sample_spectra = self.combined_model(temp_grid, temp_dist, dict_abund, sample['Redshift [log(z)]'], 
-                           sample['Normalisation'], sample['Velocity [km/sec]'])
-            plt.plot(self.energy.detach().numpy(), sample_spectra[self.interval].cpu().detach().numpy(), color='green', alpha = 0.05)
-        plt.plot(self.energy.detach().numpy()[0], sample_spectra[self.interval].cpu().detach().numpy()[0], color='green',  label='Models drawn from posterior')
-        plt.yscale('log')
-        plt.legend()
-        plt.xlabel('Energy [KeV]')
-        plt.ylabel('Counts/KeV/s')
-        plt.ylim(1e-2, max(self.intensity)*2)
-        plt.xlim(0.1, 15)
-        plt.show()
-
-        
-        for i in range(len(self.param_names)):
-            mcmc = np.percentile(self.fit_distribution[:, i], [16, 50, 84])
-            q = np.diff(mcmc)
-            txt = f"{self.param_names[i]} = {mcmc[1]}_(-{q[0]})^({+{q[1]}})"
-            # The below only works in Visual Studio Code
-            #txt = "\mathrm{{{3}}} = {0:.5f}_{{-{1:.5f}}}^{{{2:.5f}}}"
-            #txt = txt.format(mcmc[1], q[0], q[1], self.param_names[i])
-            #display(Math(txt))
-        
-    
-    def log_prior(self, params):
-        ''' 
-        calculates the log prior for the parameters everthing is uniform except the metalicty.
-        '''
-        if (self.int_temp[0] > params['Temperature [KeV]'] or self.int_temp[1] < params['Temperature [KeV]']
-            or self.int_logz[0] > params['Temp Stdev log[KeV]'] or self.int_logz[1] < params['Temp Stdev log[KeV]']
-            or self.int_logz[0] > params['Redshift [log(z)]'] or self.int_logz[1] < params['Redshift [log(z)]']
-            or self.int_norm[0] > params['Normalisation'] or self.int_norm[1] < params['Normalisation']
-            or self.int_vel[0] > params['Velocity [km/sec]'] or self.int_vel[1] < params['Velocity [km/sec]']
-            or 0 > params['Metalicity [Fe/H]']
-        ):
-            return -np.inf
-        
-        prior_met = np.log(1.0/(np.sqrt(2*np.pi)*self.prior['met']['sigma']))-0.5*(params['Metalicity [Fe/H]']-self.prior['met']['mu'])**2/self.prior['met']['sigma']**2
-        prior_stdevtemp = np.log(1.0/(np.sqrt(2*np.pi)*self.prior['stdevtemp']['sigma']))-0.5*(params['Temp Stdev log[KeV]']-self.prior['stdevtemp']['mu'])**2/self.prior['stdevtemp']['sigma']**2
-        prior_temp =  np.log(1.0/(np.sqrt(2*np.pi)*self.prior['temp']['sigma']))-0.5*(params['Temperature [KeV]']-self.prior['temp']['mu'])**2/self.prior['temp']['sigma']**2
-        prior_vel =  np.log(1.0/(np.sqrt(2*np.pi)*self.prior['vel']['sigma']))-0.5*(params['Velocity [km/sec]']-self.prior['vel']['mu'])**2/self.prior['vel']['sigma']**2
-        
-        prior_Z = 0
-        for key in params.keys():
-            if key.startswith('Z'):
-                prior_Z += np.log(1.0/(np.sqrt(2*np.pi)*self.prior['Z_']['sigma']))-0.5*(params[key]-self.prior['Z_']['mu'])**2/self.prior['Z_']['sigma']**2
-                if params[key] < 0:
-                    return -np.inf
-        return prior_met + prior_Z + prior_temp + prior_vel + prior_stdevtemp
-
-    def log_likelihood(self, data, model, params):
-        ''' 
-        Calculaters the log_likelhood between the model and the data
-        Parameters
-        ----------
-        data: array
-        model: torch nn.Model() object
-            NN model
-        params: dir
-            directory of parameters names and values
-        '''
-        lp = self.log_prior(params)
-        if not np.isfinite(lp):
-            return -np.inf
-        
-        #intialize list of abunadace
-        dict_abund = {}
-        for i in torch.arange(6,31):
-            dict_abund[f'Z{i}'] = params['Metalicity [Fe/H]']
-            for key in params.keys():
-                if key == f'Z{i} [Z{i}/Fe]':
-                    dict_abund[f'Z{i}'] = params['Metalicity [Fe/H]']*params[f'Z{i} [Z{i}/Fe]']
-        
-        #intialize temperature grid
-        low = max(params['Temperature [KeV]']-4*10**params['Temp Stdev log[KeV]'], 0.1)
-        high = min(params['Temperature [KeV]']+4*10**params['Temp Stdev log[KeV]'],10)
-        temp_grid = torch.linspace(low,
-                                    high, 
-                                    400, dtype=torch.float32, device='cuda')
-        temp_dist = self.normal_dist(temp_grid, params['Temperature [KeV]'], 10**params['Temp Stdev log[KeV]'])
-        #calculate spectra with NN
-        with torch.no_grad():
-            ymodel = model(temp_grid, temp_dist, dict_abund, params['Redshift [log(z)]'], 
-                           params['Normalisation'], params['Velocity [km/sec]'])
-            
-        if np.any(np.isnan(lp + np.sum(poisson.logpmf(data, mu=(ymodel[self.interval].cpu().detach().numpy()*self.dx*self.exp_time+1e-30))))):
-            print('error')
-
-        return lp + np.sum(poisson.logpmf(data, mu=(ymodel[self.interval].cpu().detach().numpy()*self.dx*self.exp_time+1e-30)))
-    
-    
     def log_prob(self, param_values, param_names, data, model, derived=None):
         ''' 
         Update the base model with all the parameters that are being constrained.
@@ -306,14 +320,6 @@ class FitTempDist(object):
         else:
             derived = [] 
         return self.log_likelihood(data, model, params), derived
-    
-    def normal_dist(self, x, mean, sd):
-        '''
-        Normal Distribution
-        '''
-        sd = torch.tensor(sd, dtype=torch.float32, device=x.device)
-        prob_density = 1/(torch.sqrt(torch.tensor(2*np.pi, dtype=torch.float32, device=x.device)*sd**2)) * torch.exp(-0.5*((x-torch.tensor(mean, dtype=torch.float32, device=x.device))/sd)**2)
-        return prob_density
     
     def flat_to_nested_dict(self, dct: dict) -> dict:
         """Convert a dct of key: value pairs into a nested dict.
@@ -334,3 +340,341 @@ class FitTempDist(object):
             key_to_dct(k, v, out)
         return out
     
+
+
+class TwoTemp(Fit):
+    def __init__(self, nwalkers, nsteps, prior, Luminosity_Distance = None,
+                 e_min=None, e_max=None, fdir_nn='neuralnetworks/'):
+        '''
+        Class to be able fit a spectrum with a Two Temperature model in the form of a gaussion
+        Parameters
+        ----------
+        nwalkers: int
+            number walkers for the EMCEE fit
+        nsteps: int
+            number of steps
+        Luminosity_Distance: float default:None
+            Luminosity Distance of the source in [m]
+        prior: dir
+            Intial guess/prior of the variables in the form of {'var_name': {'mu':float, 'sigma':float}}
+        fdir_NN: str default:'neuralnetworks/'
+            directory of torch object to restucture spectra and best nn
+        e_min, e_max: float default:None
+            minium or maximum energy
+
+        '''
+
+        self.e_min = e_min
+        self.e_max = e_max
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print('Using', self.device)
+        self.combined_model = model.TwoTemp(Luminosity_Distance=Luminosity_Distance, fdir_nn=fdir_nn, device=self.device)
+
+        #prior
+        self.prior = prior
+
+        self.interval = {}
+
+        #interval
+        self.interval['temp1'] = [0.2, 10]
+        self.interval['temp2'] = [0.2, 10]
+        self.interval['logz'] = [-10, 1]
+        self.interval['vel'] = [0, 600]
+        self.interval['norm1'] = [1e5, 1e15]
+        self.interval['norm2'] = [1e5, 1e15]
+
+        #fit parameters
+        self.nwalkers = nwalkers
+        self.nsteps = nsteps
+
+        self.param_names = list(self.prior.keys())
+
+
+    def sim_data(self, param, exp_time=50000):
+        '''creates simulated data from the neural network model'''
+        dict_abund = {}
+        for i in torch.arange(6,31):
+            dict_abund[f'Z{i}'] = param['met']
+            for key in param.keys():
+                if key == f'Z{i}':
+                    dict_abund[f'Z{i}'] = param['met']*param[f'Z{i}']
+
+        temp1 = torch.tensor([param['temp1']], dtype=torch.float32, device=self.device)
+        temp2 = torch.tensor([param['temp2']], dtype=torch.float32, device=self.device)
+        with torch.no_grad():
+            spectra = self.combined_model(temp1, temp2, dict_abund, param['logz'], 
+                                         param['vel'], param['norm1'], param['norm2']).cpu().detach().numpy()
+        
+        chan_diff = self.combined_model.chan_diff.numpy()
+        chan_cent = self.combined_model.chan_cent.numpy()
+        self.exp_time = exp_time
+
+        #cut off spectra outside of e_min and e_max
+        if self.e_min is None:
+            self.e_min= min(chan_cent)
+        if self.e_max is None:
+            self.e_max = max(chan_cent)
+
+        intv = np.where(chan_cent < self.e_min, False, True)
+        self.intv = np.where(chan_cent > self.e_max, False, intv)
+
+        self.counts = np.random.poisson(spectra*chan_diff*exp_time)[self.intv]
+        self.intensity = self.counts/chan_diff[self.intv]/exp_time
+        self.energy = chan_cent[self.intv]
+        self.chan_diff = chan_diff[self.intv]
+
+    def plot_spectrum(self, nsample=20):
+        ''' 
+        plots the spectra data against the distribution of best fits
+        Parmeters
+        ---------
+        nsample: int, default: 20
+            number of times sampeling from posterior
+        '''
+        fig = plt.figure(figsize=(20,10))
+        plt.plot(self.energy, self.intensity, alpha=0.5, label='Simulated Data')
+
+        for i in range(nsample):
+            sample = self.df.sample().squeeze().to_dict()
+            dict_abund = {}
+            for i in torch.arange(6,31):
+                dict_abund[f'Z{i}'] = sample['met']
+                for key in sample.keys():
+                    if key == f'Z{i}':
+                        dict_abund[f'Z{i}'] = sample['met']*sample[key]
+
+            temp1 = torch.tensor([sample['temp1']], dtype=torch.float32, device=self.device)
+            temp2 = torch.tensor([sample['temp2']], dtype=torch.float32, device=self.device)
+            with torch.no_grad():
+                sample_spectra = self.combined_model(temp1, temp2, dict_abund, sample['logz'], 
+                                                     sample['vel'], sample['norm1'], sample['norm2'])
+            plt.plot(self.energy, sample_spectra[self.intv].cpu().detach().numpy(), color='green', alpha = 0.05)
+        plt.plot(self.energy[0], sample_spectra[self.intv].cpu().detach().numpy()[0], color='green',  label='Models drawn from posterior')
+        plt.yscale('log')
+        plt.legend()
+        plt.xlabel('Energy [KeV]')
+        plt.ylabel('Counts/KeV/s')
+        plt.ylim(1e-2, max(self.intensity)*2)
+        plt.xlim(0.1, 15)
+        plt.show()
+
+        
+        for i in range(len(self.param_names)):
+            mcmc = np.percentile(self.fit_distribution[:, i], [16, 50, 84])
+            q = np.diff(mcmc)
+            txt = f"{self.param_names[i]} = {mcmc[1]}_(-{q[0]})^(+{q[1]})"
+            print(txt)
+            # The below only works in Visual Studio Code
+            #txt = "\mathrm{{{3}}} = {0:.5f}_{{-{1:.5f}}}^{{{2:.5f}}}"
+            #txt = txt.format(mcmc[1], q[0], q[1], self.param_names[i])
+            #display(Math(txt))
+
+    def log_likelihood(self, data, model, params):
+        ''' 
+        Calculaters the log_likelhood between the model and the data
+        Parameters
+        ----------
+        data: array
+        model: torch nn.Model() object
+            NN model
+        params: dir
+            directory of parameters names and values
+        '''
+        lp = self.log_prior(params)
+        if not np.isfinite(lp):
+            return -np.inf
+        
+        #intialize list of abunadace
+        dict_abund = {}
+        for i in torch.arange(6,31):
+            dict_abund[f'Z{i}'] = params['met']
+            for key in params.keys():
+                if key == f'Z{i}':
+                    dict_abund[f'Z{i}'] = params['met']*params[key]
+        
+        temp1 = torch.tensor([params['temp1']], dtype=torch.float32, device=self.device)
+        temp2 = torch.tensor([params['temp2']], dtype=torch.float32, device=self.device)
+        #calculate spectra with NN
+        with torch.no_grad():
+            ymodel = model(temp1, temp2, dict_abund, params['logz'], 
+                           params['vel'], params['norm1'],params['norm2'])
+
+        if np.any(np.isnan(lp + np.sum(poisson.logpmf(data, mu=(ymodel[self.intv].cpu().detach().numpy()*self.chan_diff*self.exp_time+1e-30))))):
+            print('error')
+
+        return lp + np.sum(poisson.logpmf(data, mu=(ymodel[self.intv].cpu().detach().numpy()*self.chan_diff*self.exp_time+1e-30)))
+
+
+
+class TempDist(Fit):
+    def __init__(self, nwalkers, nsteps, prior, dist_func, interval, Luminosity_Distance = None,
+                 e_min=None, e_max=None, fdir_nn='neuralnetworks/'):
+        '''
+        Class to be able fit a spectrum with a temperature distribution in the form of a gaussion
+        Parameters
+        ----------
+        nwalkers: int
+            number walkers for the EMCEE fit
+        nsteps: int
+            number of steps
+        prior: dir
+            Intial guess/prior of the variables in the form of {'var_name': {'mu':float, 'sigma':float}}
+        dist_func: object
+            function that returns takes in a dictinary with name 'params' with the distribution parameters
+            and returns the temperutre grid and temperature distribution
+        inteval: dict
+            Interval of the distribution parameters in form of {'var_name': [float, float]}
+        Luminosity_Distance: float default:None
+            Luminosity Distance of the source in [m]
+        fdir_nn: str default:'neuralnetworks/'
+            directory of torch object to restucture spectra and best nn
+        e_min, e_max: float default:None
+            minium or maximum energy
+
+        '''
+
+        self.e_min = e_min
+        self.e_max = e_max
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print('Using', self.device)
+        self.combined_model = model.TempDist(Luminosity_Distance=Luminosity_Distance, fdir_nn=fdir_nn, device=self.device)
+
+        #prior
+        self.prior = prior
+        self.dist_func = dist_func
+        self.interval = interval
+
+        #interval
+        self.interval['logz'] = [-10, 1]
+        self.interval['norm'] = [1e5, 1e15]
+        self.interval['vel'] = [0, 600]
+
+        #fit parameters
+        self.nwalkers = nwalkers
+        self.nsteps = nsteps
+
+
+        self.param_names = list(prior.keys())
+
+
+    def sim_data(self, params, exp_time=50000):
+        '''creates simulated data from the neural network model'''
+        dict_abund = {}
+        for i in torch.arange(6,31):
+            dict_abund[f'Z{i}'] = params['met']
+            for key in params.keys():
+                if key == f'Z{i}':
+                    dict_abund[f'Z{i}'] = params['met']*params[key]
+
+        temp_grid, temp_dist = self.dist_func(params)
+        temp_grid = torch.tensor(temp_grid, dtype=torch.float32, device=self.device)
+        temp_dist = torch.tensor(temp_dist, dtype=torch.float32, device=self.device)
+        with torch.no_grad():
+            spectra = self.combined_model(temp_grid, temp_dist, dict_abund, params['logz'], 
+                                          params['norm'], params['vel']).cpu().detach().numpy()
+        
+        chan_diff = self.combined_model.chan_diff.numpy()
+        chan_cent = self.combined_model.chan_cent.numpy()
+        self.exp_time = exp_time
+
+        #cut off spectra outside of e_min and e_max
+        if self.e_min is None:
+            self.e_min= min(chan_cent)
+        if self.e_max is None:
+            self.e_max = max(chan_cent)
+
+        intv = np.where(chan_cent < self.e_min, False, True)
+        self.intv = np.where(chan_cent > self.e_max, False, intv)
+
+        self.counts = np.random.poisson(spectra*chan_diff*exp_time)[self.intv]
+        self.intensity = self.counts/chan_diff[self.intv]/exp_time
+        self.energy = chan_cent[self.intv]
+        self.chan_diff = chan_diff[self.intv]
+
+
+    def plot_spectrum(self, nsample=20):
+        ''' 
+        plots the spectra data against the distribution of best fits
+        Parmeters
+        ---------
+        nsample: int, default: 20
+            number of times sampeling from posterior
+        '''
+        fig = plt.figure(figsize=(20,10))
+        plt.plot(self.energy, self.intensity, alpha=0.5, label='Data')
+
+        for i in range(nsample):
+            params = self.df.sample().squeeze().to_dict()
+            dict_abund = {}
+            for i in torch.arange(6,31):
+                dict_abund[f'Z{i}'] = params['met']
+                for key in params.keys():
+                    if key == f'Z{i}':
+                        dict_abund[f'Z{i}'] = params['met']*params[key]
+
+            temp_grid, temp_dist = self.dist_func(params)
+            temp_grid = torch.tensor(temp_grid, dtype=torch.float32, device=self.device)
+            temp_dist = torch.tensor(temp_dist, dtype=torch.float32, device=self.device)
+            with torch.no_grad():
+                sample_spectra = self.combined_model(temp_grid, temp_dist, dict_abund, params['logz'], 
+                           params['norm'], params['vel'])
+            plt.plot(self.energy, sample_spectra[self.intv].cpu().detach().numpy()/self.chan_diff/self.exp_time, color='green', alpha = 0.05)
+        plt.plot(self.energy[0], (sample_spectra[self.intv].cpu().detach().numpy()/self.chan_diff/self.exp_time)[0], color='green',  label='Models drawn from posterior')
+        plt.yscale('log')
+        plt.legend()
+        plt.xlabel('Energy [KeV]')
+        plt.ylabel('Counts/KeV/s')
+        plt.ylim(1e-2, max(self.intensity)*2)
+        plt.xlim(self.e_min, self.e_max)
+        plt.show()
+
+        
+        for i in range(len(self.param_names)):
+            mcmc = np.percentile(self.fit_distribution[:, i], [16, 50, 84])
+            q = np.diff(mcmc)
+            txt = f"{self.param_names[i]} = {mcmc[1]}_(-{q[0]})^(+{q[1]})"
+            print(txt)
+            # The below only works in Visual Studio Code
+            #txt = "\mathrm{{{3}}} = {0:.5f}_{{-{1:.5f}}}^{{{2:.5f}}}"
+            #txt = txt.format(mcmc[1], q[0], q[1], self.param_names[i])
+            #display(Math(txt))
+        
+    
+    def log_likelihood(self, data, model, params):
+        ''' 
+        Calculaters the log_likelhood between the model and the data
+        Parameters
+        ----------
+        data: array
+        model: torch nn.Model() object
+            NN model
+        params: dir
+            directory of parameters names and values
+        '''
+        lp = self.log_prior(params)
+        if not np.isfinite(lp):
+            return -np.inf
+        
+        #intialize list of abunadace
+        dict_abund = {}
+        for i in torch.arange(6,31):
+            dict_abund[f'Z{i}'] = params['met']
+            for key in params.keys():
+                if key == f'Z{i}':
+                    dict_abund[f'Z{i}'] = params['met']*params[key]
+        
+
+        temp_grid, temp_dist = self.dist_func(params)
+        temp_grid = torch.tensor(temp_grid, dtype=torch.float32, device=self.device)
+        temp_dist = torch.tensor(temp_dist, dtype=torch.float32, device=self.device)
+        #calculate spectra with NN
+        with torch.no_grad():
+            ymodel = model(temp_grid, temp_dist, dict_abund, params['logz'], 
+                           params['norm'], params['vel'])
+
+        if np.any(np.isnan(lp + np.sum(poisson.logpmf(data, mu=(ymodel[self.intv].cpu().detach().numpy()*self.chan_diff*self.exp_time+1e-30))))):
+            print('error')
+
+        return lp + np.sum(poisson.logpmf(data, mu=(ymodel[self.intv].cpu().detach().numpy()*self.chan_diff*self.exp_time+1e-30)))
