@@ -75,7 +75,7 @@ class Fit(object):
             self.e_max = max(chan_cent)
 
         intv = np.where(chan_cent < self.e_min, False, True)
-        self.int = np.where(chan_cent > self.e_max, False, intv)
+        self.intv = np.where(chan_cent > self.e_max, False, intv)
 
 
         self.counts = (counts[self.intv]).astype(int)
@@ -83,7 +83,7 @@ class Fit(object):
         self.energy = chan_cent[self.intv]
         self.chan_diff = chan_diff[self.intv]
 
-    def sim_data(self, params, exp_time=50000):
+    def sim_data(self, params, exp_time=5000):
         '''creates simulated data from the neural network model'''
         dict_abund = {}
         for i in torch.arange(6,31):
@@ -93,6 +93,8 @@ class Fit(object):
                     dict_abund[f'Z{i}'] = params['met']*params[f'Z{i}']
 
         temp = torch.tensor([params['temp']], dtype=torch.float32, device=self.device)
+
+        self.combined_model.to(self.device)
         with torch.no_grad():
             spectra = self.combined_model(temp, dict_abund, params['logz'], 
                                           params['norm'], params['vel']).cpu().detach().numpy()
@@ -110,10 +112,14 @@ class Fit(object):
         intv = np.where(chan_cent < self.e_min, False, True)
         self.intv = np.where(chan_cent > self.e_max, False, intv)
 
+        print(chan_diff, exp_time)
+
         self.counts = np.random.poisson(spectra*chan_diff*exp_time)[self.intv]
-        self.intensity = self.counts/chan_diff[self.int]/exp_time
-        self.energy = chan_cent[self.int]
-        self.chan_diff = chan_diff[self.int]
+
+        self.intensity = self.counts/(chan_diff[self.intv]*exp_time)
+        print(self.intensity)
+        self.energy = chan_cent[self.intv]
+        self.chan_diff = chan_diff[self.intv]
 
     def fit_spectra(self, add_prior=None):
         ''' 
@@ -134,7 +140,7 @@ class Fit(object):
             kwargs = {
                 'param_names': self.param_names,
                 'data': self.counts,
-                'model': self.combined_model
+                'model': self.combined_model.to(self.device)
                 }
             )
         
@@ -167,7 +173,10 @@ class Fit(object):
                 return -np.inf
         if 0 > params['met']:
             return -np.inf
-        
+        for key in params.keys():
+            if key.startswith('Z'):
+                if 0 > params[key]:
+                    return -np.inf
         #caluculate priors on parameters
         prior = 0
         for key in self.prior.keys():
@@ -204,9 +213,6 @@ class Fit(object):
             ymodel = model(temp, dict_abund, params['logz'], 
                            params['norm'], params['vel'])
 
-        if np.any(np.isnan(lp + np.sum(poisson.logpmf(data, mu=(ymodel[self.intv].cpu().detach().numpy()*self.chan_diff*self.exp_time+1e-30))))):
-            print('error')
-
         return lp + np.sum(poisson.logpmf(data, mu=(ymodel[self.intv].cpu().detach().numpy()*self.chan_diff*self.exp_time+1e-30)))
     
     def plot_spectrum(self, nsample=20):
@@ -240,7 +246,7 @@ class Fit(object):
         plt.xlabel('Energy [KeV]')
         plt.ylabel('Counts/KeV/s')
         plt.ylim(1e-2, max(self.intensity)*2)
-        plt.xlim(0.1, 15)
+        plt.xlim(self.e_min, self.e_max)
         plt.show()
 
         
@@ -391,7 +397,7 @@ class TwoTemp(Fit):
         self.param_names = list(self.prior.keys())
 
 
-    def sim_data(self, param, exp_time=50000):
+    def sim_data(self, param, exp_time=5000):
         '''creates simulated data from the neural network model'''
         dict_abund = {}
         for i in torch.arange(6,31):
@@ -456,7 +462,7 @@ class TwoTemp(Fit):
         plt.xlabel('Energy [KeV]')
         plt.ylabel('Counts/KeV/s')
         plt.ylim(1e-2, max(self.intensity)*2)
-        plt.xlim(0.1, 15)
+        plt.xlim(self.e_min, self.e_max)
         plt.show()
 
         
@@ -559,7 +565,7 @@ class TempDist(Fit):
         self.param_names = list(prior.keys())
 
 
-    def sim_data(self, params, exp_time=50000):
+    def sim_data(self, params, exp_time=5000):
         '''creates simulated data from the neural network model'''
         dict_abund = {}
         for i in torch.arange(6,31):

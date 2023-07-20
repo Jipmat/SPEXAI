@@ -70,6 +70,7 @@ class CombinedModel(nn.Module):
 
         self.LD = Luminosity_Distance
         self.shape = shape
+        self.device = device
 
     def broadening(self, spectra, velocity):
         '''
@@ -149,7 +150,7 @@ class CombinedModel(nn.Module):
         self.chan_diff = (chan[2]-chan[1]).type(torch.float32)
         #define variables for  redshift
         self.diag_index = torch.arange(len(self.e_cent)).view(1,-1).repeat(2,1)
-        self.rebin_interp = RebinSpectra_interpolate(self.e_cent, self.new_e_cent)
+        self.rebin_interp = RebinSpectra_interpolate(self.e_cent, self.new_e_cent).to(self.device)
 
     def load_arf(self, filepath):
            '''
