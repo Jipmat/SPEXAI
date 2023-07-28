@@ -6,7 +6,7 @@ import scipy.constants as constants
 
 from spexai.inference import write_tensors
 from spexai.train import FFN, CNN
-
+import matplotlib.pyplot as plt
 
 torch.set_default_dtype(torch.float32)
 
@@ -43,12 +43,8 @@ class CombinedModel(nn.Module):
                                     'FF_out(50125)_nL(3|150)_Act(nonlin)_p(0.0)',
                                     'FF_out(50125)_nL(3|250)_Act(nonlin)_p(0.0)', 
                                     'CNN_out(50125)_nFF(2|150)_nCNN(1|75|100)_Act(tanh)_p(0.0)'])
-        possible_models.append([FFN(1,50125,3,150,'tanh'), 
-                                FFN(1,50125,3,150,'nonlin'), 
-                                FFN(1,50125,3,250,'nonlin'), 
-                                CNN(1,50125, 2, 150, 1, 100, 75, 'tanh')])
-        self.models = write_tensors.load_models(list_elements, fdir_nn, 
-                                                possible_modelnames, possible_models, device)
+        self.models = write_tensors.load_models(list_elements, fdir_nn,  possible_modelnames, device)
+        self.device = device
 
         #read in mean and stdev for inverse standard scaling
         self.means = nn.ParameterDict({})
@@ -70,7 +66,6 @@ class CombinedModel(nn.Module):
 
         self.LD = Luminosity_Distance
         self.shape = shape
-        self.device = device
 
     def broadening(self, spectra, velocity):
         '''
@@ -131,7 +126,7 @@ class CombinedModel(nn.Module):
             y += torch.multiply(torch.pow(torch.tensor(10, dtype=torch.float32, device=temp.device), torch.add(torch.multiply(model(temp).flatten(), self.scales[key]), self.means[key])), value)
 
         output = self.broadening(y.flatten(), velocity).flatten()
-        output = self.rebin_interp(output.flatten(), 10**logz).flatten()*norm
+        output = self.rebin_interp(output.flatten(),  10**logz).flatten()*norm
         output = torch.mul(output, self.arf)
         output = torch.sparse.mm(self.rm, output.view(-1,1)).flatten()
         return output
@@ -223,7 +218,7 @@ class TwoTemp(CombinedModel):
             value = torch.tensor(value, dtype=torch.float32, device=temp1.device)
             model = self.models[key].to(temp1.device)
             y += torch.multiply(torch.pow(torch.tensor(10, dtype=torch.float32, device=temp1.device), torch.add(torch.multiply(model(temp1).flatten(), self.scales[key]), self.means[key])), value)*norm1
-            y += torch.multiply(torch.pow(torch.tensor(10, dtype=torch.float32, device=temp1.device), torch.add(torch.multiply(model(temp1).flatten(), self.scales[key]), self.means[key])), value)*norm2
+            y += torch.multiply(torch.pow(torch.tensor(10, dtype=torch.float32, device=temp1.device), torch.add(torch.multiply(model(temp2).flatten(), self.scales[key]), self.means[key])), value)*norm2
 
         output = self.broadening(y.flatten(), velocity).flatten()
         output = self.rebin_interp(output.flatten(), 10**logz).flatten()

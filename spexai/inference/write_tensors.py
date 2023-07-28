@@ -2,7 +2,11 @@ from astropy.io import fits
 import numpy as np
 import pandas as pd
 import torch
+import re
 torch.set_default_dtype(torch.float32)
+
+from spexai.train import FFN, CNN
+
 
 
 def rmf_to_torchmatrix(filepath):
@@ -26,7 +30,6 @@ def rmf_to_torchmatrix(filepath):
     (chan_e_cent, chan_e_lo, chan_e_hi): (tensor, tensor, tensor)
         tensors of center energy bins and upper and lower energy bounds of the channels
     """ 
-
     with fits.open(filepath) as rmf_file:
         rmf_data = rmf_file['MATRIX'].data
         rmf_channel = rmf_file['EBOUNDS'].data
@@ -95,7 +98,7 @@ def arf_to_tensor(filepath):
     spec_e_lo = torch.tensor(data['ENERG_LO'].astype(np.float32))
     spec_e_hi = torch.tensor(data['ENERG_HI'].astype(np.float32))
     spec_e_cent = torch.div(torch.add(spec_e_lo, spec_e_hi), torch.tensor(2))
-
+    spec_resp *= 1e-4 #take into acount per square cm instead of m
     return spec_resp, (spec_e_cent, spec_e_lo, spec_e_hi)
 
 
@@ -145,7 +148,7 @@ def read_energy_file(filepath, min_energy=None, max_energy=None):
     return spec_e_cent, spec_e_lo, spec_e_hi
 
 
-def load_models(elements, file_dir, model_names, models, device):
+def load_models(elements, file_dir, model_names, device):
     ''' 
     Read all the trained models of all the elements and put them in ModuleDict with the elements name as key (Z__).
     Parameters
@@ -160,19 +163,30 @@ def load_models(elements, file_dir, model_names, models, device):
         The model class with the same NN architecture as the model names
 
     '''
-    dic = {}
+    dic = torch.nn.ModuleDict({})
     for i in elements:
         added = False
-        for name, model in zip(np.array(model_names).flatten(), np.array(models).flatten()):
+        for name in np.array(model_names).flatten():
             try:
+                if name.startswith('FF'):
+                    l_names = re.findall(r"[-+]?(?:\d*\.*\d+)", name)
+                    act_func = re.findall(r'\(.*?\)', name)[2][1:-1]
+                    model = FFN(1, int(l_names[0]), int(l_names[1]), int(l_names[2]), act_func, float(l_names[3]))
+                elif name.startswith('CNN'):
+                    l_names = re.findall(r"[-+]?(?:\d*\.*\d+)", name)
+                    act_func = re.findall(r'\(.*?\)', name)[3][1:-1]
+                    model = CNN(1, int(l_names[0]), int(l_names[1]), int(l_names[2]), int(l_names[3]),
+                                 int(l_names[4]), int(l_names[5]), act_func, int(l_names[6]))
+
                 model.load_state_dict(torch.load(file_dir+'Z'+str(i)+'/'+name+'.pt', map_location=device))
+                model.eval()
                 dic['Z'+str(i)] = model
                 added = True
             except:
                 pass
         if added is False:
-            print(f'The model name for element {i} is False')
-    return torch.nn.ModuleDict(dic)
+            NameError(f'Error: the model for element {i} did not load')
+    return dic
 
 
 def make_sparsex(x, n=300):

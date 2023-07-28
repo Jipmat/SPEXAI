@@ -83,7 +83,7 @@ class Fit(object):
         self.energy = chan_cent[self.intv]
         self.chan_diff = chan_diff[self.intv]
 
-    def sim_data(self, params, exp_time=5000):
+    def sim_data(self, params, exp_time=10000):
         '''creates simulated data from the neural network model'''
         dict_abund = {}
         for i in torch.arange(6,31):
@@ -111,13 +111,9 @@ class Fit(object):
 
         intv = np.where(chan_cent < self.e_min, False, True)
         self.intv = np.where(chan_cent > self.e_max, False, intv)
-
-        print(chan_diff, exp_time)
-
         self.counts = np.random.poisson(spectra*chan_diff*exp_time)[self.intv]
 
         self.intensity = self.counts/(chan_diff[self.intv]*exp_time)
-        print(self.intensity)
         self.energy = chan_cent[self.intv]
         self.chan_diff = chan_diff[self.intv]
 
@@ -181,7 +177,6 @@ class Fit(object):
         prior = 0
         for key in self.prior.keys():
             prior+= np.log(1.0/(np.sqrt(2*np.pi)*self.prior[key]['sigma']))-0.5*(params[key]-self.prior[key]['mu'])**2/self.prior[key]['sigma']**2
-
         return prior
 
     def log_likelihood(self, data, model, params):
@@ -210,8 +205,7 @@ class Fit(object):
         temp = torch.tensor([params['temp']], dtype=torch.float32, device=self.device)
         #calculate spectra with NN
         with torch.no_grad():
-            ymodel = model(temp, dict_abund, params['logz'], 
-                           params['norm'], params['vel'])
+            ymodel = model(temp, dict_abund, params['logz'],  params['norm'], params['vel'])
 
         return lp + np.sum(poisson.logpmf(data, mu=(ymodel[self.intv].cpu().detach().numpy()*self.chan_diff*self.exp_time+1e-30)))
     
@@ -397,7 +391,7 @@ class TwoTemp(Fit):
         self.param_names = list(self.prior.keys())
 
 
-    def sim_data(self, param, exp_time=5000):
+    def sim_data(self, param, exp_time=10000):
         '''creates simulated data from the neural network model'''
         dict_abund = {}
         for i in torch.arange(6,31):
@@ -408,6 +402,7 @@ class TwoTemp(Fit):
 
         temp1 = torch.tensor([param['temp1']], dtype=torch.float32, device=self.device)
         temp2 = torch.tensor([param['temp2']], dtype=torch.float32, device=self.device)
+        self.combined_model.to(self.device)
         with torch.no_grad():
             spectra = self.combined_model(temp1, temp2, dict_abund, param['logz'], 
                                          param['vel'], param['norm1'], param['norm2']).cpu().detach().numpy()
@@ -565,7 +560,7 @@ class TempDist(Fit):
         self.param_names = list(prior.keys())
 
 
-    def sim_data(self, params, exp_time=5000):
+    def sim_data(self, params, exp_time=10000):
         '''creates simulated data from the neural network model'''
         dict_abund = {}
         for i in torch.arange(6,31):
@@ -577,6 +572,7 @@ class TempDist(Fit):
         temp_grid, temp_dist = self.dist_func(params)
         temp_grid = torch.tensor(temp_grid, dtype=torch.float32, device=self.device)
         temp_dist = torch.tensor(temp_dist, dtype=torch.float32, device=self.device)
+        self.combined_model.to(self.device)
         with torch.no_grad():
             spectra = self.combined_model(temp_grid, temp_dist, dict_abund, params['logz'], 
                                           params['norm'], params['vel']).cpu().detach().numpy()
@@ -679,8 +675,5 @@ class TempDist(Fit):
         with torch.no_grad():
             ymodel = model(temp_grid, temp_dist, dict_abund, params['logz'], 
                            params['norm'], params['vel'])
-
-        if np.any(np.isnan(lp + np.sum(poisson.logpmf(data, mu=(ymodel[self.intv].cpu().detach().numpy()*self.chan_diff*self.exp_time+1e-30))))):
-            print('error')
 
         return lp + np.sum(poisson.logpmf(data, mu=(ymodel[self.intv].cpu().detach().numpy()*self.chan_diff*self.exp_time+1e-30)))
