@@ -227,7 +227,79 @@ class CombinedModel(nn.Module):
 
         return energy, counts, intensity
 
+    def save_matrices(self, path):
+         """
+         Store expensive matrices to pickle files for faster loading.
+         **Note**: This is meant as short-term storage for fast loading 
+         when the same responses are used multiple times. Do not 
+         use this method for long-term storage!
 
+
+         Parameters
+         ----------
+         path : str
+            Path and any file prefixes to use for saving the data
+         """
+
+        with open(f"{path}xrism_rmf.pkl", "wb") as f:
+            pickle.dump(rm, f)
+            
+        with open(f"{path}new_e_cent.pkl", "wb") as f:
+            pickle.dump(new_e_cent, f)
+        
+        with open(f"{path}chan_cent.pkl", "wb") as f:
+            pickle.dump(chan_cent, f)
+            
+        with open(f"{path}chan_diff.pkl", "wb") as f:
+            pickle.dump(chan_diff, f)
+        
+        with open(f"{path}diag_index.pkl", "wb") as f:
+            pickle.dump(diag_index, f)
+            
+        with open(f"{path}rebin_interp.pkl", "wb") as f:
+            pickle.dump(rebin_interp, f)
+        
+        with open(f"{path}sm_x.pkl", "wb") as f:
+            pickle.dump(sm_x, f)
+        
+        return
+
+    def load_matrices(self, path):
+         """
+         Load expensive matrices from pickle files saved using the 
+         `save_matrices` method.
+.
+         **Note**: This is meant as short-term storage for fast loading 
+         when the same responses are used multiple times. Do not 
+         use this method for long-term storage!
+
+         Parameters
+         ----------
+         path : str
+            Path and any file prefixes to use for saving the data
+         """
+
+        with open(f"{path}xrism_rmf.pkl", "rb") as f:
+            combined_model.rm = pickle.load(f)
+            
+        with open(f"{path}new_e_cent.pkl", "rb") as f:
+            combined_model.new_e_cent = pickle.load(f)
+        
+        with open(f"{path}chan_cent.pkl", "rb") as f:
+            combined_model.chan_cent = pickle.load(f)
+        
+        with open(f"{path}chan_diff.pkl", "rb") as f:
+            combined_model.chan_diff = pickle.load(f)
+        
+        with open(f"{path}diag_index.pkl", "rb") as f:
+            combined_model.diag_index = pickle.load(f)
+            
+        with open(f"{path}rebin_interp.pkl", "rb") as f:
+            combined_model.rebin_interp = pickle.load(f)
+                    
+        with open(f"{path}sm_x.pkl", "rb") as f:
+            combined_model.sm_x = pickle.load(f)
+        
 class TwoTemp(CombinedModel):
     def __init__(self, **kwargs):
         '''
