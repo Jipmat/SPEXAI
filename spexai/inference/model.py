@@ -161,6 +161,71 @@ class CombinedModel(nn.Module):
         '''
         self.sm_x = write_tensors.make_sparsex(self.e_cent, n=n)
         
+    def simulate_data(self, params, ntemp=1, dist_func=None, exp_time=10000, e_min=None, e_max=None):
+        '''
+        Simulate a data set from the combined model. `ntemp` sets the number of 
+        temperature components. If `dist_func` is not `None`, then this parameter 
+        will be ignored and the temperature will be parametrized as a distribution
+        instead.
+
+        **TO DO**: This doesn't work yet!
+
+
+        '''
+        dict_abund = {}
+        for i in torch.arange(6,31):
+            dict_abund[f'Z{i}'] = params['met']
+            for key in params.keys():
+                if key == f'Z{i}':
+                    dict_abund[f'Z{i}'] = params['met']*params[key]
+        
+        if dist_func is not None:
+            temp_grid, temp_dist = self.dist_func(params)
+            temp_grid = torch.tensor(temp_grid, dtype=torch.float32, device=self.device)
+            temp_dist = torch.tensor(temp_dist, dtype=torch.float32, device=self.device)
+            #self.combined_model.to(self.device)
+            with torch.no_grad():
+                spectrum = self.forward(temp_grid, temp_dist, dict_abund, params['logz'],
+                                              params['norm'], params['vel']).cpu().detach().numpy()
+        
+        else:
+            if ntemp == 1:
+                temp = torch.tensor([params['temp']], dtype=torch.float32, device=self.device)
+
+                #combined_model.to(self.device)
+                with torch.no_grad():
+                    spectrum = self.forward(temp, dict_abund, params['logz'],
+                                                  params['norm'], params['vel']).cpu().detach().numpy()
+           
+            elif ntemp == 2:
+                temp1 = torch.tensor([param['temp1']], dtype=torch.float32, device=self.device)
+                temp2 = torch.tensor([param['temp2']], dtype=torch.float32, device=self.device)
+                #self.combined_model.to(self.device)
+                with torch.no_grad():
+                    spectrum = self.forward(temp1, temp2, dict_abund, param['logz'],
+                                           param['vel'], param['norm1'], param['norm2']).cpu().detach().numpy()
+
+            else:
+                raise ValueError("Currently can only do 1 or 2 temperatures or a distribution.")
+
+
+        chan_diff = self.chan_diff.numpy()
+        chan_cent = self.chan_cent.numpy()
+
+        #cut off spectra outside of e_min and e_max
+        if e_min is None:
+            e_min= min(chan_cent)
+        if e_max is None:
+            e_max = max(chan_cent)
+
+        intv = np.where(chan_cent < e_min, False, True)
+        intv = np.where(chan_cent > e_max, False, intv)
+
+        counts = np.random.poisson(spectrum*chan_diff*exp_time)[intv]
+        intensity = counts/chan_diff[intv]/exp_time
+        energy = chan_cent[intv]
+
+        return energy, counts, intensity
 
 
 class TwoTemp(CombinedModel):
